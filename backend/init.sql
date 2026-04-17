@@ -1,0 +1,8 @@
+CREATE TABLE users (
+    id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash TEXT  ,
+    google_id VARCHAR(255) UNIQUE,
+    auth_provider VARCHAR(20) DEFAULT 'local',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

@@ -1,10 +1,17 @@
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import Landing from './pages/Landing';
+import FleetInfo from './pages/FleetInfo';
+import Signup from './pages/Signup';
+
 function App() {
   return (
-    <>
-      <h1 className="text-3xl font-bold underline">
-        Hello world!
-      </h1>
-    </>
+    <Router>
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/signup" element={<Signup />} />
+        <Route path="/fleet-info" element={<FleetInfo />} />
+      </Routes>
+    </Router>
   )
 }
 

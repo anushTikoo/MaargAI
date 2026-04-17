@@ -28,7 +28,7 @@ router.get('/', (req, res) => {
   res.redirect(authUrl);
 });
 
-// GET /api/auth/google/callback
+// GET /api/auth/google/call  ack
 // Google redirects here after user grants/denies permission
 router.get('/callback', async (req, res) => {
   const { code, error } = req.query;
@@ -82,7 +82,7 @@ router.get('/callback', async (req, res) => {
       isNewUser = true;
     }
 
-    res.redirect(`${BASE_URL}`);
+    res.redirect(`${BASE_URL}/fleet-info`);
   } catch (err) {
     console.error('Google OAuth callback error:', err);
     res.redirect(`${BASE_URL}/signup?error=server_error`);

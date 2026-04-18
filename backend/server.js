@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import basicAuth from './routes/basicAuth.js';
 import googleAuthRoutes from './routes/googleAuth.js';
 import trucksRoutes from './routes/trucks.js';
+import fleetUploadRoutes from './routes/fleetUpload.js';
 
 dotenv.config();
 
@@ -18,6 +19,7 @@ app.use(express.json());
 app.use('/api/auth', basicAuth);
 app.use('/api/auth/google', googleAuthRoutes);
 app.use('/api/trucks', trucksRoutes);
+app.use('/api/fleet', fleetUploadRoutes);
 
 // Basic health check
 app.get('/', (req, res) => {

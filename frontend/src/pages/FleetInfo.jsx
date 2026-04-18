@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { addTruckForCurrentUser } from '../services/trucksService';
+import { uploadFleetExcelFile } from '../services/fleetUploadService';
 
 const MAX_EXCEL_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const ALLOWED_EXCEL_EXTENSIONS = ['xls', 'xlsx'];
@@ -27,25 +28,50 @@ export default function FleetInfo() {
     const [formError, setFormError] = useState('');
     const [formSuccess, setFormSuccess] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
     const [selectedExcelFile, setSelectedExcelFile] = useState(null);
     const [uploadedExcelFileName, setUploadedExcelFileName] = useState('');
     const [fileUploadError, setFileUploadError] = useState('');
+    const [fileUploadSuccess, setFileUploadSuccess] = useState('');
 
     const fileInputRef = useRef(null);
 
     const handleFileSelect = () => {
         setFileUploadError('');
+        setFileUploadSuccess('');
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
         fileInputRef.current?.click();
     };
 
-    const handleFileUpload = () => {
+    const handleFileUpload = async () => {
         if (!selectedExcelFile) {
             handleFileSelect();
             return;
         }
 
         setFileUploadError('');
-        setUploadedExcelFileName(selectedExcelFile.name);
+        setFileUploadSuccess('');
+
+        try {
+            setIsUploading(true);
+
+            const result = await uploadFleetExcelFile(selectedExcelFile);
+            const savedCount = Number(result?.saved ?? 0);
+            const failedCount = Number(result?.failed ?? 0);
+
+            setUploadedExcelFileName(selectedExcelFile.name);
+            setFileUploadSuccess(`Saved ${savedCount} trucks.`);
+
+            if (failedCount > 0) {
+                setFileUploadError(result?.first_error || `${failedCount} rows could not be saved.`);
+            }
+        } catch (error) {
+            setFileUploadError(error?.message || 'Unable to upload fleet file.');
+        } finally {
+            setIsUploading(false);
+        }
     };
 
     const handleFileChange = (e) => {
@@ -53,6 +79,7 @@ export default function FleetInfo() {
 
         if (selectedFiles.length > 1) {
             setFileUploadError('Only one file can be uploaded at a time.');
+            setFileUploadSuccess('');
             setSelectedExcelFile(null);
             setUploadedExcelFileName('');
             e.target.value = '';
@@ -64,11 +91,13 @@ export default function FleetInfo() {
         if (!file) {
             setSelectedExcelFile(null);
             setUploadedExcelFileName('');
+            setFileUploadSuccess('');
             return;
         }
 
         if (!isAllowedExcelFile(file.name)) {
             setFileUploadError('Only Excel files (.xls or .xlsx) are allowed.');
+            setFileUploadSuccess('');
             setSelectedExcelFile(null);
             setUploadedExcelFileName('');
             e.target.value = '';
@@ -77,6 +106,7 @@ export default function FleetInfo() {
 
         if (file.size > MAX_EXCEL_FILE_SIZE_BYTES) {
             setFileUploadError('File size must be 50 MB or less.');
+            setFileUploadSuccess('');
             setSelectedExcelFile(null);
             setUploadedExcelFileName('');
             e.target.value = '';
@@ -84,6 +114,7 @@ export default function FleetInfo() {
         }
 
         setFileUploadError('');
+        setFileUploadSuccess('');
         setSelectedExcelFile(file);
         setUploadedExcelFileName('');
     };
@@ -204,9 +235,10 @@ export default function FleetInfo() {
                         <button
                             type="button"
                             onClick={selectedExcelFile ? handleFileUpload : handleFileSelect}
-                            className="cursor-pointer bg-primary text-on-primary px-8 py-3 rounded-lg font-bold flex items-center gap-2 hover:bg-primary-container transition-all border-none shadow-lg shadow-primary/10 active:scale-95"
+                            disabled={isUploading}
+                            className="cursor-pointer bg-primary text-on-primary px-8 py-3 rounded-lg font-bold flex items-center gap-2 hover:bg-primary-container transition-all border-none shadow-lg shadow-primary/10 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed"
                         >
-                            {selectedExcelFile ? 'Upload' : 'Select File'}{' '}
+                            {isUploading ? 'Uploading...' : selectedExcelFile ? 'Upload' : 'Select File'}{' '}
                             <span className="material-symbols-outlined">{selectedExcelFile ? 'cloud_upload' : 'attachment'}</span>
                         </button>
 
@@ -225,6 +257,7 @@ export default function FleetInfo() {
                         </p>
 
                         {fileUploadError ? <p className="mt-3 text-sm text-error font-medium">{fileUploadError}</p> : null}
+                        {fileUploadSuccess ? <p className="mt-3 text-sm text-green-700 font-medium">{fileUploadSuccess}</p> : null}
                     </div>
                 </div>
 

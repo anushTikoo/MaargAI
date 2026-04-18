@@ -57,6 +57,10 @@
 }
 
 @layer base {
+  html {
+    font-size: 95%;
+  }
+
   body {
     font-family: 'Inter', sans-serif;
     background-color: var(--color-surface);

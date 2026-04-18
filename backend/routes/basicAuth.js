@@ -1,6 +1,12 @@
 import express from 'express';
 import bcrypt from 'bcrypt';
 import pool from '../db.js';
+import {
+  createAuthToken,
+  serializeAuthCookie,
+  serializeClearAuthCookie,
+} from '../utils/authSession.js';
+import requireAuth from '../middleware/requireAuth.js';
 
 const router = express.Router();
 
@@ -38,13 +44,17 @@ router.post('/register', async (req, res) => {
     );
 
     const newUser = result.rows[0];
+    const authToken = createAuthToken(newUser);
+
+    res.setHeader('Set-Cookie', serializeAuthCookie(authToken));
 
     res.status(201).json({
       message: 'User registered successfully.',
       user: {
         id: newUser.id,
         email: newUser.email,
-      }
+      },
+      token: authToken,
     });
 
   } catch (error) {
@@ -89,18 +99,52 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
+    const authToken = createAuthToken({ id: user.id, email: user.email });
+
+    res.setHeader('Set-Cookie', serializeAuthCookie(authToken));
+
     res.status(200).json({
       message: 'Login successful.',
       user: {
         id: user.id,
         email: user.email,
       },
+      token: authToken,
     });
 
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Internal server error.' });
   }
+});
+
+// GET /api/auth/me
+router.get('/me', requireAuth, async (req, res) => {
+
+  try {
+    const result = await pool.query(
+      'SELECT id, email FROM users WHERE id = $1',
+      [req.auth.sub]
+    );
+
+    if (result.rows.length === 0) {
+      res.setHeader('Set-Cookie', serializeClearAuthCookie());
+      return res.status(401).json({ error: 'Unauthorized.' });
+    }
+
+    return res.status(200).json({
+      user: result.rows[0],
+    });
+  } catch (error) {
+    console.error('Auth me error:', error);
+    return res.status(500).json({ error: 'Internal server error.' });
+  }
+});
+
+// POST /api/auth/logout
+router.post('/logout', (req, res) => {
+  res.setHeader('Set-Cookie', serializeClearAuthCookie());
+  return res.status(200).json({ message: 'Logged out successfully.' });
 });
 
 export default router;

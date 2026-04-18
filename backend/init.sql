@@ -54,6 +54,7 @@ CREATE TABLE trips (
     deadline_timestamp TIMESTAMP,
     status VARCHAR(20) DEFAULT 'active',
     baseline_eta_seconds INT,
+    baseline_distance_meters INT,
     current_route_id INT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 

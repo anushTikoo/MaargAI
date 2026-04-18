@@ -1,6 +1,8 @@
 import express from 'express';
 import { OAuth2Client } from 'google-auth-library';
 import pool from '../db.js';
+import { createAuthToken, serializeAuthCookie } from '../utils/authSession.js';
+import { createAuthHandoff, consumeAuthHandoff } from '../utils/authHandoff.js';
 
 const router = express.Router();
 
@@ -82,11 +84,40 @@ router.get('/callback', async (req, res) => {
       isNewUser = true;
     }
 
-    res.redirect(`${BASE_URL}/fleet-info`);
+    const authToken = createAuthToken(user);
+    res.setHeader('Set-Cookie', serializeAuthCookie(authToken));
+
+    const handoffCode = createAuthHandoff(user);
+    res.redirect(`${BASE_URL}/fleet-info?handoff=${handoffCode}`);
   } catch (err) {
     console.error('Google OAuth callback error:', err);
     res.redirect(`${BASE_URL}/signup?error=server_error`);
   }
+});
+
+// POST /api/auth/google/exchange
+// Exchange a short-lived handoff code for the normal auth cookie.
+router.post('/exchange', async (req, res) => {
+  const { code } = req.body;
+
+  if (!code) {
+    return res.status(400).json({ error: 'Handoff code is required.' });
+  }
+
+  const user = consumeAuthHandoff(code);
+
+  if (!user) {
+    return res.status(401).json({ error: 'Invalid or expired handoff code.' });
+  }
+
+  const authToken = createAuthToken(user);
+  res.setHeader('Set-Cookie', serializeAuthCookie(authToken));
+
+  return res.status(200).json({
+    message: 'Google sign-in successful.',
+    user,
+    token: authToken,
+  });
 });
 
 export default router;

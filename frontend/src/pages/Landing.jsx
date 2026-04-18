@@ -14,9 +14,6 @@ export default function Landing() {
             MaargAI
           </a>
           {/* Navigation Links (Web) */}
-          <div className="hidden md:flex items-center gap-8 font-inter tracking-tight">
-            <a className="text-on-surface-variant font-medium hover:text-primary transition-colors duration-200" href="#">How it Works</a>
-          </div>
           {/* Actions */}
           <div className="flex items-center gap-2 sm:gap-4">
             <button
@@ -46,7 +43,7 @@ export default function Landing() {
               <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
               Live Logistics Intelligence
             </span>
-            <h1 className="text-5xl md:text-6xl lg:text-7xl text-on-surface mb-6 font-headline font-extrabold tracking-tight leading-tight">
+            <h1 className="text-4xl md:text-5xl lg:text-6xl text-on-surface mb-6 font-headline font-extrabold tracking-tight leading-tight">
               The Digital Wayfinder for Indian Logistics.
             </h1>
             <p className="text-lg md:text-xl text-on-surface-variant font-body mb-10 leading-relaxed max-w-xl">

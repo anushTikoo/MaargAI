@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
+import { cacheAuthSession } from '../services/authService';
 
 export default function Signup() {
   const location = useLocation();
@@ -82,6 +83,7 @@ export default function Signup() {
       const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
       const response = await fetch(`${apiBaseUrl}${endpoint}`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -97,8 +99,11 @@ export default function Signup() {
         throw new Error(data?.error || 'Unable to complete authentication.');
       }
 
+      cacheAuthSession({ token: data.token, user: data.user });
       setStatus(data?.message || (isLogin ? 'Signed in successfully.' : 'Signed up successfully.'));
-      navigate('/fleet-info', {
+      const redirectTo = location.state?.from?.pathname || '/fleet-info';
+
+      navigate(redirectTo, {
         replace: true,
         state: { user: data.user },
       });

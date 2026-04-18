@@ -1,7 +1,6 @@
 import { cacheAuthSession, fetchCurrentUser, getAuthSession } from './authService';
 
 const apiBaseUrl = import.meta.env.VITE_BACKEND_URL || `${window.location.protocol}//${window.location.hostname}:3000`;
-const trucksCachePrefix = 'maargai_trucks_user_';
 
 function getAuthHeaders() {
     const token = getAuthSession()?.token;
@@ -13,66 +12,6 @@ function getAuthHeaders() {
     return {
         Authorization: `Bearer ${token}`,
     };
-}
-
-function getUserTrucksCacheKey(userId) {
-    return `${trucksCachePrefix}${userId}`;
-}
-
-function parseJson(rawValue) {
-    try {
-        return JSON.parse(rawValue);
-    } catch {
-        return null;
-    }
-}
-
-function normalizeCachedTrucks(parsedValue) {
-    if (Array.isArray(parsedValue)) {
-        return parsedValue;
-    }
-
-    if (parsedValue && Array.isArray(parsedValue.trucks)) {
-        return parsedValue.trucks;
-    }
-
-    return null;
-}
-
-function readTrucksFromCache(userId) {
-    const rawCache = window.localStorage.getItem(getUserTrucksCacheKey(userId));
-
-    if (!rawCache) {
-        return null;
-    }
-
-    const parsedCache = parseJson(rawCache);
-    return normalizeCachedTrucks(parsedCache);
-}
-
-function writeTrucksToCache(userId, trucks) {
-    window.localStorage.setItem(
-        getUserTrucksCacheKey(userId),
-        JSON.stringify({
-            trucks,
-            cachedAt: Date.now(),
-        })
-    );
-}
-
-function upsertTruckInCache(userId, truck) {
-    const cachedTrucks = readTrucksFromCache(userId) ?? [];
-    const deduplicated = cachedTrucks.filter(
-        (cachedTruck) => cachedTruck.id !== truck.id && cachedTruck.truck_number !== truck.truck_number
-    );
-
-    writeTrucksToCache(userId, [truck, ...deduplicated]);
-}
-
-function removeTruckFromCache(userId, truckId) {
-    const cachedTrucks = readTrucksFromCache(userId) ?? [];
-    const filtered = cachedTrucks.filter((cachedTruck) => String(cachedTruck.id) !== String(truckId));
-    writeTrucksToCache(userId, filtered);
 }
 
 async function resolveCurrentUserId() {
@@ -130,17 +69,11 @@ export async function addTruckForCurrentUser({ truckNumber, truckType, advancedS
         throw new Error('Truck was added but response was invalid.');
     }
 
-    upsertTruckInCache(userId, data.truck);
     return data.truck;
 }
 
 export async function getTrucksForCurrentUser() {
     const userId = await resolveCurrentUserId();
-    const cachedTrucks = readTrucksFromCache(userId);
-
-    if (cachedTrucks !== null) {
-        return { trucks: cachedTrucks, source: 'local-storage' };
-    }
 
     const response = await fetch(`${apiBaseUrl}/api/trucks?fleet_manager_id=${encodeURIComponent(userId)}`, {
         method: 'GET',
@@ -157,7 +90,6 @@ export async function getTrucksForCurrentUser() {
     }
 
     const trucks = Array.isArray(data) ? data : [];
-    writeTrucksToCache(userId, trucks);
 
     return { trucks, source: 'database' };
 }
@@ -197,7 +129,6 @@ export async function updateTruckForCurrentUser(truckId, { truckNumber, truckTyp
         throw new Error('Truck was updated but response was invalid.');
     }
 
-    upsertTruckInCache(userId, data.truck);
     return data.truck;
 }
 
@@ -217,6 +148,5 @@ export async function deleteTruckForCurrentUser(truckId) {
         throw new Error(data?.error || 'Unable to delete truck.');
     }
 
-    removeTruckFromCache(userId, truckId);
     return true;
 }

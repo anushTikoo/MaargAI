@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import basicAuth from './routes/basicAuth.js';
 import googleAuthRoutes from './routes/googleAuth.js';
 import trucksRoutes from './routes/trucks.js';
+import tripsRoutes from './routes/trips.js';
 import fleetUploadRoutes from './routes/fleetUpload.js';
 
 dotenv.config();
@@ -16,9 +17,11 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
+
 app.use('/api/auth', basicAuth);
 app.use('/api/auth/google', googleAuthRoutes);
 app.use('/api/trucks', trucksRoutes);
+app.use('/api/trips', tripsRoutes);
 app.use('/api/fleet', fleetUploadRoutes);
 
 // Basic health check

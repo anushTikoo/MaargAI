@@ -43,6 +43,8 @@ export async function getRoutes(sourceLat, sourceLng, destLat, destLng) {
             headers: {
                 'Content-Type': 'application/json',
                 'X-Goog-Api-Key': apiKey,
+                // Add Referer to satisfy API key restrictions
+                'Referer': process.env.CLIENT_URL || 'http://localhost:3000',
                 // FieldMask allows us to limit response size and specify extraction targets exactly
                 'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline,routes.routeLabels'
             },

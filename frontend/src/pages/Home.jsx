@@ -48,14 +48,11 @@ export default function Home() {
                             </span>{' '}
                             Add Fleet
                         </Link>
-                        <Link className={`cursor-pointer py-3 px-6 flex items-center gap-3 hover:translate-x-1 transition-transform duration-200 font-['Inter'] text-[0.7rem] uppercase tracking-[0.05em] ${isActive('/view-shipments') ? 'bg-white text-primary font-bold shadow-sm rounded-r-full' : 'text-secondary'}`} to="/view-shipments">
-                            <span className="material-symbols-outlined text-[1.2rem]">inventory_2</span> View Shipments
-                        </Link>
-                        <Link className={`cursor-pointer py-3 px-6 flex items-center gap-3 hover:translate-x-1 transition-transform duration-200 font-['Inter'] text-[0.7rem] uppercase tracking-[0.05em] ${isActive('/add-shipments') ? 'bg-white text-primary font-bold shadow-sm rounded-r-full' : 'text-secondary'}`} to="/add-shipments">
-                            <span className="material-symbols-outlined text-[1.2rem]" style={isActive('/add-shipments') ? { fontVariationSettings: "'FILL' 1" } : {}}>
-                                add_shopping_cart
+                        <Link className={`cursor-pointer py-3 px-6 flex items-center gap-3 hover:translate-x-1 transition-transform duration-200 font-['Inter'] text-[0.7rem] uppercase tracking-[0.05em] ${isActive('/shipments') ? 'bg-white text-primary font-bold shadow-sm rounded-r-full' : 'text-secondary'}`} to="/shipments">
+                            <span className="material-symbols-outlined text-[1.2rem]" style={isActive('/shipments') ? { fontVariationSettings: "'FILL' 1" } : {}}>
+                                inventory_2
                             </span>{' '}
-                            Add Shipments
+                            Shipments
                         </Link>
                     </nav>
                     <div className="mt-auto px-6 py-8 border-t border-outline-variant/15 flex flex-col gap-4">

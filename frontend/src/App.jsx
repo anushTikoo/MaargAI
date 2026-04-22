@@ -5,8 +5,7 @@ import Signup from './pages/Signup';
 import Home from './pages/Home';
 import Overview from './pages/Overview';
 import VehicleList from './pages/VehicleList';
-import ViewShipments from './pages/ViewShipments';
-import AddShipments from './pages/AddShipments';
+import Shipments from './pages/Shipments';
 import ProtectedRoute from './guards/ProtectedRoute';
 
 function App() {
@@ -21,8 +20,7 @@ function App() {
             <Route path="/dashboard" element={<Overview />} />
             <Route path="/fleet-info" element={<FleetInfo />} />
             <Route path="/vehicle-list" element={<VehicleList />} />
-            <Route path="/view-shipments" element={<ViewShipments />} />
-            <Route path="/add-shipments" element={<AddShipments />} />
+            <Route path="/shipments" element={<Shipments />} />
           </Route>
         </Route>
       </Routes>

@@ -8,7 +8,9 @@ export async function getRoutes(sourceLat, sourceLng, destLat, destLng) {
     const apiKey = process.env.GOOGLE_MAPS_API_KEY;
 
     if (!apiKey) {
-        throw new Error("GOOGLE_MAPS_API_KEY is not defined in environment variables.");
+        const missingKeyError = new Error('GOOGLE_MAPS_API_KEY is not defined in environment variables.');
+        missingKeyError.statusCode = 500;
+        throw missingKeyError;
     }
 
     const url = 'https://routes.googleapis.com/directions/v2:computeRoutes';
@@ -50,9 +52,22 @@ export async function getRoutes(sourceLat, sourceLng, destLat, destLng) {
         });
 
         if (!response.ok) {
-            const errData = await response.json();
-            console.error("Google Routes API Error details:", errData);
-            throw new Error(`Google Routes API failed with status ${response.status}`);
+            const errData = await response.json().catch(() => null);
+            const providerMessage = errData?.error?.message || `Google Routes API failed with status ${response.status}`;
+
+            console.error('Google Routes API Error details:', errData || { status: response.status });
+
+            let userFacingMessage = providerMessage;
+
+            if (response.status === 403 && /referer\s*<empty>\s*are\s*blocked/i.test(providerMessage)) {
+                userFacingMessage =
+                    'Google Routes API key is blocked for backend calls (referer <empty>). Use a server-side key for GOOGLE_MAPS_API_KEY with API restrictions for Routes API and no HTTP referrer restriction.';
+            }
+
+            const routesError = new Error(userFacingMessage);
+            routesError.statusCode = 502;
+            routesError.providerStatus = response.status;
+            throw routesError;
         }
 
         const data = await response.json();
@@ -85,6 +100,12 @@ export async function getRoutes(sourceLat, sourceLng, destLat, destLng) {
 
     } catch (error) {
         console.error("Error communicating with Google Routes API:", error);
-        throw error;
+        if (error?.statusCode) {
+            throw error;
+        }
+
+        const transportError = new Error(error?.message || 'Failed to communicate with Google Routes API.');
+        transportError.statusCode = 502;
+        throw transportError;
     }
 }

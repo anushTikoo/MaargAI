@@ -47,6 +47,8 @@ CREATE TABLE trips (
     id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     fleet_manager_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     truck_id INT NOT NULL REFERENCES trucks(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    destination TEXT NOT NULL,
     source_lat DOUBLE PRECISION NOT NULL,
     source_lng DOUBLE PRECISION NOT NULL,
     dest_lat DOUBLE PRECISION NOT NULL,
@@ -59,7 +61,13 @@ CREATE TABLE trips (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT chk_trip_status
-        CHECK (status IN ('active','completed'))
+        CHECK (status IN ('active','completed')),
+
+    CONSTRAINT chk_trip_source_not_empty
+        CHECK (length(trim(source)) > 0),
+
+    CONSTRAINT chk_trip_destination_not_empty
+        CHECK (length(trim(destination)) > 0)
 );
 
 -- Routes

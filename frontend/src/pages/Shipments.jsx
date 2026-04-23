@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { getTrucksForCurrentUser } from '../services/trucksService';
+import { createTripForCurrentUser, deleteTripForCurrentUser, getTripsForCurrentUser } from '../services/tripsService';
 
 const PLACES_SEARCH_DEBOUNCE_MS = 1000;
 const GOOGLE_PLACES_API_KEY = import.meta.env.VITE_GOOGLE_PLACES_API_KEY;
@@ -70,11 +72,18 @@ async function fetchPlaceLatLng(placeId) {
     return {
         lat: latitude,
         lng: longitude,
+        address: typeof data?.formattedAddress === 'string' ? data.formattedAddress.trim() : '',
     };
 }
 
 function formatCoordinate(value) {
-    return Number(value).toFixed(5);
+    const numericValue = Number(value);
+
+    if (!Number.isFinite(numericValue)) {
+        return 'N/A';
+    }
+
+    return numericValue.toFixed(5);
 }
 
 function formatDateLabel(value) {
@@ -91,6 +100,89 @@ function formatDateLabel(value) {
     return parsed.toLocaleString();
 }
 
+function formatDistanceMeters(value) {
+    const numericValue = Number(value);
+
+    if (!Number.isFinite(numericValue)) {
+        return 'N/A';
+    }
+
+    if (numericValue >= 1000) {
+        return `${(numericValue / 1000).toFixed(1)} km`;
+    }
+
+    return `${Math.round(numericValue)} m`;
+}
+
+function formatEtaSeconds(value) {
+    const totalSeconds = Number(value);
+
+    if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+        return 'N/A';
+    }
+
+    const roundedSeconds = Math.round(totalSeconds);
+    const days = Math.floor(roundedSeconds / 86400);
+    const hours = Math.floor((roundedSeconds % 86400) / 3600);
+    const minutes = Math.floor((roundedSeconds % 3600) / 60);
+
+    if (days > 0) {
+        return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+    }
+
+    if (hours > 0) {
+        return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+    }
+
+    if (minutes > 0) {
+        return `${minutes}m`;
+    }
+
+    return `${roundedSeconds}s`;
+}
+
+function getValidTimestamp(value) {
+    if (!value) {
+        return null;
+    }
+
+    const timestamp = new Date(value).getTime();
+    return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function sortTripsForDisplay(trips) {
+    return [...trips].sort((leftTrip, rightTrip) => {
+        const leftDeadlineTimestamp = getValidTimestamp(leftTrip?.deadline_timestamp);
+        const rightDeadlineTimestamp = getValidTimestamp(rightTrip?.deadline_timestamp);
+        const leftHasDeadline = Number.isFinite(leftDeadlineTimestamp);
+        const rightHasDeadline = Number.isFinite(rightDeadlineTimestamp);
+
+        // Always keep trips with deadlines above trips without deadlines.
+        if (leftHasDeadline !== rightHasDeadline) {
+            return leftHasDeadline ? -1 : 1;
+        }
+
+        // If both have deadlines, sort by earliest deadline first.
+        if (leftHasDeadline && rightHasDeadline && leftDeadlineTimestamp !== rightDeadlineTimestamp) {
+            return leftDeadlineTimestamp - rightDeadlineTimestamp;
+        }
+
+        // If both do not have deadlines, sort by created_at (older first).
+        const leftCreatedTimestamp = getValidTimestamp(leftTrip?.created_at);
+        const rightCreatedTimestamp = getValidTimestamp(rightTrip?.created_at);
+
+        if (Number.isFinite(leftCreatedTimestamp) && Number.isFinite(rightCreatedTimestamp) && leftCreatedTimestamp !== rightCreatedTimestamp) {
+            return leftCreatedTimestamp - rightCreatedTimestamp;
+        }
+
+        if (Number.isFinite(leftCreatedTimestamp) !== Number.isFinite(rightCreatedTimestamp)) {
+            return Number.isFinite(leftCreatedTimestamp) ? -1 : 1;
+        }
+
+        return Number(leftTrip?.id || 0) - Number(rightTrip?.id || 0);
+    });
+}
+
 export default function Shipments() {
     const [sourceAddress, setSourceAddress] = useState('');
     const [destinationAddress, setDestinationAddress] = useState('');
@@ -100,8 +192,6 @@ export default function Shipments() {
     const [isDestinationDropdownOpen, setIsDestinationDropdownOpen] = useState(false);
     const [isSourceSearching, setIsSourceSearching] = useState(false);
     const [isDestinationSearching, setIsDestinationSearching] = useState(false);
-    const [sourceLocation, setSourceLocation] = useState(null);
-    const [destinationLocation, setDestinationLocation] = useState(null);
     const [sourcePlaceId, setSourcePlaceId] = useState('');
     const [destinationPlaceId, setDestinationPlaceId] = useState('');
     const [deadline, setDeadline] = useState('');
@@ -109,11 +199,17 @@ export default function Shipments() {
     const [fleetTrucks, setFleetTrucks] = useState([]);
     const [isLoadingFleetTrucks, setIsLoadingFleetTrucks] = useState(true);
     const [fleetTrucksError, setFleetTrucksError] = useState('');
-    const [shipments, setShipments] = useState([]);
+    const [trips, setTrips] = useState([]);
+    const [isLoadingTrips, setIsLoadingTrips] = useState(true);
+    const [tripsError, setTripsError] = useState('');
 
     const [formError, setFormError] = useState('');
     const [formSuccess, setFormSuccess] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [deletingTripId, setDeletingTripId] = useState(null);
+    // Delete modal state
+    const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+    const [tripToDelete, setTripToDelete] = useState(null);
 
     const sourceSearchTimeoutRef = useRef(null);
     const destinationSearchTimeoutRef = useRef(null);
@@ -121,6 +217,7 @@ export default function Shipments() {
     const destinationSearchRequestIdRef = useRef(0);
     const sourceSessionTokenRef = useRef(createPlacesSessionToken());
     const destinationSessionTokenRef = useRef(createPlacesSessionToken());
+    const displayTrips = sortTripsForDisplay(trips);
 
     useEffect(() => {
         return () => {
@@ -132,6 +229,19 @@ export default function Shipments() {
             }
         };
     }, []);
+
+    useEffect(() => {
+        if (!deleteModalOpen) {
+            return undefined;
+        }
+
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+
+        return () => {
+            document.body.style.overflow = previousOverflow;
+        };
+    }, [deleteModalOpen]);
 
     useEffect(() => {
         let ignoreResult = false;
@@ -172,9 +282,42 @@ export default function Shipments() {
         };
     }, []);
 
+    useEffect(() => {
+        let ignoreResult = false;
+
+        async function loadTrips() {
+            setIsLoadingTrips(true);
+            setTripsError('');
+
+            try {
+                const { trips: fetchedTrips } = await getTripsForCurrentUser();
+
+                if (ignoreResult) {
+                    return;
+                }
+
+                setTrips(Array.isArray(fetchedTrips) ? fetchedTrips : []);
+            } catch (error) {
+                if (!ignoreResult) {
+                    setTrips([]);
+                    setTripsError(error?.message || 'Unable to load trips.');
+                }
+            } finally {
+                if (!ignoreResult) {
+                    setIsLoadingTrips(false);
+                }
+            }
+        }
+
+        loadTrips();
+
+        return () => {
+            ignoreResult = true;
+        };
+    }, []);
+
     const searchSourceSuggestions = (value) => {
         setSourceAddress(value);
-        setSourceLocation(null);
         setSourcePlaceId('');
         setFormError('');
 
@@ -227,7 +370,6 @@ export default function Shipments() {
 
     const searchDestinationSuggestions = (value) => {
         setDestinationAddress(value);
-        setDestinationLocation(null);
         setDestinationPlaceId('');
         setFormError('');
 
@@ -278,7 +420,7 @@ export default function Shipments() {
         }, PLACES_SEARCH_DEBOUNCE_MS);
     };
 
-    const selectSourceSuggestion = async (suggestion) => {
+    const selectSourceSuggestion = (suggestion) => {
         if (sourceSearchTimeoutRef.current) {
             clearTimeout(sourceSearchTimeoutRef.current);
         }
@@ -290,17 +432,10 @@ export default function Shipments() {
         setIsSourceDropdownOpen(false);
         setFormError('');
 
-        try {
-            const latLng = await fetchPlaceLatLng(suggestion.placeId);
-            setSourceLocation(latLng);
-            sourceSessionTokenRef.current = createPlacesSessionToken();
-        } catch (error) {
-            setSourceLocation(null);
-            setFormError(error?.message || 'Unable to fetch source location coordinates.');
-        }
+        sourceSessionTokenRef.current = createPlacesSessionToken();
     };
 
-    const selectDestinationSuggestion = async (suggestion) => {
+    const selectDestinationSuggestion = (suggestion) => {
         if (destinationSearchTimeoutRef.current) {
             clearTimeout(destinationSearchTimeoutRef.current);
         }
@@ -312,13 +447,35 @@ export default function Shipments() {
         setIsDestinationDropdownOpen(false);
         setFormError('');
 
+        destinationSessionTokenRef.current = createPlacesSessionToken();
+    };
+
+    const refreshTrips = async () => {
+        const { trips: refreshedTrips } = await getTripsForCurrentUser();
+        setTrips(Array.isArray(refreshedTrips) ? refreshedTrips : []);
+    };
+
+    const handleDeleteClick = (trip) => {
+        setTripToDelete(trip);
+        setDeleteModalOpen(true);
+    };
+
+    const confirmDeleteTrip = async () => {
+        const trip = tripToDelete;
+        if (!trip) return;
+
+        setTripsError('');
+
         try {
-            const latLng = await fetchPlaceLatLng(suggestion.placeId);
-            setDestinationLocation(latLng);
-            destinationSessionTokenRef.current = createPlacesSessionToken();
+            setDeletingTripId(trip.id);
+            await deleteTripForCurrentUser(trip.id);
+            await refreshTrips();
+            setDeleteModalOpen(false);
+            setTripToDelete(null);
         } catch (error) {
-            setDestinationLocation(null);
-            setFormError(error?.message || 'Unable to fetch destination location coordinates.');
+            setTripsError(error?.message || 'Unable to delete trip.');
+        } finally {
+            setDeletingTripId(null);
         }
     };
 
@@ -351,43 +508,40 @@ export default function Shipments() {
         try {
             setIsSubmitting(true);
 
-            const [latestSourceLocation, latestDestinationLocation] = await Promise.all([
-                sourceLocation ? Promise.resolve(sourceLocation) : fetchPlaceLatLng(sourcePlaceId),
-                destinationLocation ? Promise.resolve(destinationLocation) : fetchPlaceLatLng(destinationPlaceId),
-            ]);
+            // Convert source and destination into coordinates before sending create-trip request.
+            const latestSourceLocation = await fetchPlaceLatLng(sourcePlaceId);
+            const latestDestinationLocation = await fetchPlaceLatLng(destinationPlaceId);
+            const normalizedSourceText = latestSourceLocation.address || sourceAddress.trim();
+            const normalizedDestinationText = latestDestinationLocation.address || destinationAddress.trim();
 
-            if (!sourceLocation) {
-                setSourceLocation(latestSourceLocation);
-            }
+            const normalizedDeadline = deadline ? new Date(deadline) : null;
+            const deadlineTimestamp =
+                normalizedDeadline && !Number.isNaN(normalizedDeadline.getTime())
+                    ? normalizedDeadline.toISOString()
+                    : null;
 
-            if (!destinationLocation) {
-                setDestinationLocation(latestDestinationLocation);
-            }
-
-            // Keep frontend-only behavior for now until a shipment create endpoint is wired.
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-
-            const newShipment = {
-                id: Date.now(),
+            await createTripForCurrentUser({
                 truckId: selectedTruck.id,
-                truckNumber: selectedTruck.truck_number,
-                sourceAddress: sourceAddress.trim(),
-                destinationAddress: destinationAddress.trim(),
+                source: normalizedSourceText,
+                destination: normalizedDestinationText,
                 sourceLat: latestSourceLocation.lat,
                 sourceLng: latestSourceLocation.lng,
                 destLat: latestDestinationLocation.lat,
                 destLng: latestDestinationLocation.lng,
-                deadline: deadline || null,
-                createdAt: new Date().toISOString(),
-            };
+                deadlineTimestamp,
+            });
 
-            setShipments((current) => [newShipment, ...current]);
-            setFormSuccess(`Shipment for truck ${selectedTruck.truck_number} added successfully.`);
+            try {
+                await refreshTrips();
+                setTripsError('');
+            } catch (refreshError) {
+                setTripsError(refreshError?.message || 'Trip created, but failed to refresh trip list.');
+            }
+
+            setFormSuccess(`Trip for truck ${selectedTruck.truck_number} added successfully.`);
 
             setSourceAddress('');
             setDestinationAddress('');
-            setSourceLocation(null);
-            setDestinationLocation(null);
             setSourcePlaceId('');
             setDestinationPlaceId('');
             setSourceSuggestions([]);
@@ -415,40 +569,167 @@ export default function Shipments() {
                 </div>
 
                 <div className="bg-surface-container-lowest border border-outline-variant/20 rounded-xl p-8 shadow-sm">
-                    <h2 className="text-xl font-bold text-on-surface mb-6">Current Shipments</h2>
+                    <div className="flex items-center justify-between gap-4 mb-6">
+                        <div>
+                            <h2 className="text-xl font-bold text-on-surface">Current Trips</h2>
+                            <p className="text-sm text-secondary mt-1">Trips created from this workspace, with live route details from the backend.</p>
+                        </div>
+                        <div className="hidden sm:flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.08em] text-secondary bg-surface-container-low px-3 py-2 rounded-full border border-outline-variant/20">
+                            <span className="material-symbols-outlined text-[1rem]">route</span>
+                            {displayTrips.length} total
+                        </div>
+                    </div>
 
-                    {shipments.length === 0 ? (
+                    {isLoadingTrips ? (
+                        <div className="flex items-center gap-3 text-sm text-secondary py-4">
+                            <span className="material-symbols-outlined animate-pulse text-[1.1rem]">progress_activity</span>
+                            Loading trips...
+                        </div>
+                    ) : tripsError ? (
+                        <div className="rounded-lg border border-error/20 bg-error/5 px-4 py-3 text-sm text-error">
+                            {tripsError}
+                        </div>
+                    ) : displayTrips.length === 0 ? (
                         <div className="flex flex-col items-center text-center py-8">
                             <div className="w-14 h-14 bg-surface-container-low rounded-full flex items-center justify-center mb-4">
                                 <span className="material-symbols-outlined text-secondary text-2xl">inventory_2</span>
                             </div>
-                            <p className="text-on-surface font-semibold mb-1">No shipments added yet</p>
-                            <p className="text-secondary text-sm">Add a shipment below and it will appear here.</p>
+                            <p className="text-on-surface font-semibold mb-1">No trips created yet</p>
+                            <p className="text-secondary text-sm">Create a trip below and it will appear here.</p>
                         </div>
                     ) : (
-                        <div className="space-y-4">
-                            {shipments.map((shipment) => (
+                        <div className="grid grid-cols-1 gap-4">
+                            {displayTrips.map((trip, index) => (
                                 <article
-                                    key={shipment.id}
-                                    className="rounded-lg border border-outline-variant/20 bg-surface-container-low px-5 py-4"
+                                    key={trip.id}
+                                    className="group overflow-hidden rounded-2xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
                                 >
-                                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                                        <p className="text-sm font-bold text-on-surface">Truck: {shipment.truckNumber}</p>
-                                        <p className="text-xs text-secondary">Created: {formatDateLabel(shipment.createdAt)}</p>
+                                    <div className="h-1 w-full bg-linear-to-r from-primary via-primary-container to-secondary/50"></div>
+                                    <div className="p-5 md:p-6 space-y-3">
+                                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                            <div className="space-y-1.5">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <span className="inline-flex items-center rounded-full bg-on-surface/5 px-3 py-1 text-lg font-black uppercase tracking-[0.08em] text-on-surface">
+                                                        Trip {index + 1}
+                                                    </span>
+                                                    <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.08em] text-primary">
+                                                        <span className="material-symbols-outlined text-[1rem]">local_shipping</span>
+                                                        Truck {trip.truck_number || `#${trip.truck_id}`}
+                                                    </span>
+                                                    <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.08em] ${trip.status === 'completed' ? 'bg-green-50 text-green-700' : 'bg-secondary/10 text-secondary'}`}>
+                                                        <span className="material-symbols-outlined text-[1rem]">
+                                                            {trip.status === 'completed' ? 'check_circle' : 'schedule'}
+                                                        </span>
+                                                        {trip.status || 'active'}
+                                                    </span>
+                                                </div>
+                                                <p className="text-sm text-secondary">
+                                                    Created {formatDateLabel(trip.created_at)}
+                                                </p>
+                                            </div>
+
+                                            <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low px-4 py-3 min-w-44">
+                                                <p className="text-[0.7rem] font-black uppercase tracking-[0.12em] text-secondary mb-1">Baseline ETA</p>
+                                                <div className="flex items-end gap-2">
+                                                    <span className="material-symbols-outlined text-primary text-[1.15rem]">timer</span>
+                                                    <span className="text-2xl font-black text-on-surface leading-none">
+                                                        {formatEtaSeconds(trip.baseline_eta_seconds)}
+                                                    </span>
+                                                </div>
+                                                <p className="text-xs text-secondary mt-2">
+                                                    {trip.baseline_eta_seconds ? `${trip.baseline_eta_seconds} seconds` : 'No baseline ETA available'}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 -mt-4 md:-mt-5">
+                                            <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low px-4 py-4">
+                                                <div className="flex items-center gap-2 mb-2 text-secondary">
+                                                    <span className="material-symbols-outlined text-[1rem]">trip_origin</span>
+                                                    <span className="text-md font-black uppercase tracking-[0.12em]">Source</span>
+                                                </div>
+                                                <p className="text-sm font-semibold text-on-surface break-all">
+                                                    {trip.source || `${formatCoordinate(trip.source_lat)}, ${formatCoordinate(trip.source_lng)}`}
+                                                </p>
+                                            </div>
+
+                                            <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low px-4 py-4">
+                                                <div className="flex items-center gap-2 mb-2 text-secondary">
+                                                    <span className="material-symbols-outlined text-[1rem]">flag</span>
+                                                    <span className="text-md font-black uppercase tracking-[0.12em]">Destination</span>
+                                                </div>
+                                                <p className="text-sm font-semibold text-on-surface break-all">
+                                                    {trip.destination || `${formatCoordinate(trip.dest_lat)}, ${formatCoordinate(trip.dest_lng)}`}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex flex-wrap gap-2 pt-1">
+                                            <span className="inline-flex items-center gap-2 rounded-full bg-surface-container-low px-3 py-1 text-xs font-semibold text-secondary border border-outline-variant/20">
+                                                <span className="material-symbols-outlined text-[0.95rem]">event</span>
+                                                Deadline: {formatDateLabel(trip.deadline_timestamp)}
+                                            </span>
+                                            <span className="inline-flex items-center gap-2 rounded-full bg-surface-container-low px-3 py-1 text-xs font-semibold text-secondary border border-outline-variant/20">
+                                                <span className="material-symbols-outlined text-[0.95rem]">straighten</span>
+                                                Distance: {formatDistanceMeters(trip.current_route_distance_meters)}
+                                            </span>
+                                            <span className="inline-flex items-center gap-2 rounded-full bg-surface-container-low px-3 py-1 text-xs font-semibold text-secondary border border-outline-variant/20">
+                                                <span className="material-symbols-outlined text-[0.95rem]">toll</span>
+                                                Tolls: {trip.current_route_has_tolls ? 'Yes' : 'No'}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDeleteClick(trip)}
+                                                disabled={deletingTripId === trip.id}
+                                                className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-transparent bg-transparent px-3 py-1 text-xs font-semibold text-red-600 transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:border-red-100 disabled:bg-transparent disabled:text-red-300 disabled:opacity-60"
+                                            >
+                                                <span className="material-symbols-outlined text-[0.95rem]">
+                                                    {deletingTripId === trip.id ? 'progress_activity' : 'delete'}
+                                                </span>
+                                                {deletingTripId === trip.id ? 'Deleting...' : 'Delete'}
+                                            </button>
+                                        </div>
                                     </div>
-                                    <p className="text-sm text-on-surface mt-2">
-                                        {shipment.sourceAddress} <span className="text-secondary">to</span> {shipment.destinationAddress}
-                                    </p>
-                                    <p className="text-xs text-secondary mt-1">
-                                        Src ({formatCoordinate(shipment.sourceLat)}, {formatCoordinate(shipment.sourceLng)}) • Dst (
-                                        {formatCoordinate(shipment.destLat)}, {formatCoordinate(shipment.destLng)})
-                                    </p>
-                                    <p className="text-xs text-secondary mt-1">Deadline: {formatDateLabel(shipment.deadline)}</p>
                                 </article>
                             ))}
                         </div>
                     )}
                 </div>
+
+                {/* DELETE MODAL */}
+                {deleteModalOpen && typeof document !== 'undefined'
+                    ? createPortal(
+                          <div className="fixed inset-0 z-50 flex h-screen w-screen items-center justify-center bg-black/50 p-4 backdrop-blur-md">
+                              <div className="bg-surface-container-lowest rounded-2xl p-8 max-w-md w-full shadow-2xl relative">
+                                  <div className="w-16 h-16 bg-error-container rounded-full flex items-center justify-center mb-6 mx-auto">
+                                      <span className="material-symbols-outlined text-on-error-container text-3xl">delete_forever</span>
+                                  </div>
+                                  <h3 className="text-2xl font-black text-center text-on-surface mb-2">Delete Trip?</h3>
+                                  <p className="text-center text-secondary mb-8">
+                                      Are you sure you want to delete the trip for truck <span className="font-bold text-on-surface">{tripToDelete?.truck_number || `#${tripToDelete?.truck_id || tripToDelete?.id}`}</span>? This action cannot be undone.
+                                  </p>
+                                  <div className="flex gap-4">
+                                      <button
+                                          onClick={() => {
+                                              setDeleteModalOpen(false);
+                                              setTripToDelete(null);
+                                          }}
+                                          className="flex-1 px-4 py-3 rounded-lg border-2 border-outline-variant text-secondary font-bold hover:bg-surface-container-low hover:text-on-surface transition-colors cursor-pointer"
+                                      >
+                                          Cancel
+                                      </button>
+                                      <button
+                                          onClick={confirmDeleteTrip}
+                                          className="flex-1 px-4 py-3 rounded-lg bg-error text-white font-bold hover:bg-red-700 transition-colors shadow-lg shadow-error/20 cursor-pointer border-none"
+                                      >
+                                          {deletingTripId ? 'Deleting...' : 'Delete'}
+                                      </button>
+                                  </div>
+                              </div>
+                          </div>,
+                          document.body,
+                      )
+                    : null}
 
                 <div className="bg-surface-container-lowest p-8 rounded-xl shadow-sm border border-outline-variant/10 relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-1 h-full bg-primary"></div>

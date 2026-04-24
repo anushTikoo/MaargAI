@@ -169,7 +169,7 @@ router.post('/locations', async (req, res) => {
         const tripResult = await pool.query(
             `SELECT id, fleet_manager_id
              FROM trips
-             WHERE truck_id = $1 AND status = 'active'
+             WHERE truck_id = $1
              ORDER BY created_at DESC
              LIMIT 1`,
             [truckId]

@@ -182,40 +182,12 @@ router.post('/locations', async (req, res) => {
         const tripId = tripResult.rows[0].id;
         const fleetManagerId = tripResult.rows[0].fleet_manager_id;
 
-        const updateLocationResult = await pool.query(
-            `WITH latest_location AS (
-                SELECT id
-                FROM trip_locations
-                WHERE trip_id = $1
-                ORDER BY timestamp DESC, id DESC
-                LIMIT 1
-            )
-            UPDATE trip_locations tl
-            SET lat = $2,
-                lng = $3,
-                timestamp = CURRENT_TIMESTAMP
-            FROM latest_location
-            WHERE tl.id = latest_location.id
-            RETURNING tl.id, tl.trip_id, tl.lat, tl.lng, tl.timestamp`,
+        const locationResult = await pool.query(
+            `INSERT INTO trip_locations (trip_id, lat, lng)
+             VALUES ($1, $2, $3)
+             RETURNING id, trip_id, lat, lng, timestamp`,
             [tripId, parsedLat, parsedLng]
         );
-
-        let savedLocation = null;
-        let action = 'inserted';
-
-        if (updateLocationResult.rowCount > 0) {
-            savedLocation = updateLocationResult.rows[0];
-            action = 'updated';
-        } else {
-            const insertLocationResult = await pool.query(
-                `INSERT INTO trip_locations (trip_id, lat, lng)
-                 VALUES ($1, $2, $3)
-                 RETURNING id, trip_id, lat, lng, timestamp`,
-                [tripId, parsedLat, parsedLng]
-            );
-
-            savedLocation = insertLocationResult.rows[0];
-        }
 
         // push to firebase (LIVE)
         await realtimeDB
@@ -226,12 +198,9 @@ router.post('/locations', async (req, res) => {
                 timestamp: Date.now()
             })
 
-        return res.status(action === 'inserted' ? 201 : 200).json({
-            message: action === 'inserted'
-                ? 'Trip location inserted successfully.'
-                : 'Trip location updated successfully.',
-            action,
-            location: savedLocation,
+        return res.status(201).json({
+            message: 'Trip location saved successfully.',
+            location: locationResult.rows[0],
         });
     } catch (error) {
         console.error('Error saving trip location:', error);

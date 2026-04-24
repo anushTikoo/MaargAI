@@ -37,7 +37,7 @@ export default function Home() {
                 <aside className="hidden md:flex h-screen w-56 sticky top-18 bg-surface-container-low flex-col py-8 z-40">
                     <nav className="flex flex-col gap-1 pr-4">
                         <Link className={`cursor-pointer py-3 px-6 flex items-center gap-3 hover:translate-x-1 transition-transform duration-200 font-['Inter'] text-[0.7rem] uppercase tracking-[0.05em] ${isActive('/dashboard') ? 'bg-white text-primary font-bold shadow-sm rounded-r-full' : 'text-secondary'}`} to="/dashboard">
-                            <span className="material-symbols-outlined text-[1.2rem]">dashboard</span> Overview
+                            <span className="material-symbols-outlined text-[1.2rem]">dashboard</span> Dashboard
                         </Link>
                         <Link className={`cursor-pointer py-3 px-6 flex items-center gap-3 hover:translate-x-1 transition-transform duration-200 font-['Inter'] text-[0.7rem] uppercase tracking-[0.05em] ${isActive('/vehicle-list') ? 'bg-white text-primary font-bold shadow-sm rounded-r-full' : 'text-secondary'}`} to="/vehicle-list">
                             <span className="material-symbols-outlined text-[1.2rem]">local_shipping</span> Vehicle List

@@ -1,34 +1,56 @@
+import { useRef, useEffect } from 'react';
+
 export default function Overview() {
+    const mapRef = useRef(null);
+
+    useEffect(() => {
+        // Initialize the map once the component mounts and google is available
+        if (mapRef.current && window.google) {
+            new window.google.maps.Map(mapRef.current, {
+                center: { lat: 20.5937, lng: 78.9629 }, // Center of India
+                zoom: 5,
+                mapId: 'DEMO_MAP_ID', // Optional: for advanced styling later
+                disableDefaultUI: true, // Clean map for dashboard
+                zoomControl: true,
+            });
+        }
+    }, []);
+
     return (
-        <section
-            className="flex-1 bg-surface-bright p-8 md:p-12 bg-[radial-gradient(circle,#e2e2e5_1px,transparent_1px)] overflow-y-auto"
-            style={{ backgroundSize: '32px 32px' }}
-        >
-            <div className="max-w-4xl mx-auto">
-                <div className="mb-12 relative">
-                    <h1 className="text-4xl font-black text-on-surface tracking-tighter mb-4">Overview</h1>
-                    <p className="text-secondary max-w-xl text-md">
-                        A quick glance at your fleet operations and active trips.
-                    </p>
-                </div>
+        <section className="flex-1 p-4 bg-surface-container-low h-[calc(100vh-64px)] overflow-hidden">
+            {/* Map Canvas - Contained UI Element */}
+            <div className="w-full h-full relative rounded-2xl overflow-hidden border border-outline-variant/30 shadow-sm shadow-black/5 bg-white">
+                {/* Map Container - Base Layer */}
+                <div 
+                    id="map-container" 
+                    ref={mapRef} 
+                    className="absolute inset-0 w-full h-full z-0"
+                ></div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    {/* Trucks Overview Card */}
-                    <div className="bg-surface-container-lowest p-8 rounded-xl shadow-sm border border-outline-variant/20 flex flex-col items-center justify-center text-center h-64">
-                        <div className="w-16 h-16 bg-surface-container-low rounded-full flex items-center justify-center mb-4 text-secondary">
-                            <span className="material-symbols-outlined text-2xl">local_shipping</span>
+                {/* Floating Panel Overlay */}
+                <div className="absolute top-4 left-4 right-4 md:top-6 md:right-6 md:left-auto z-10 w-full md:max-w-[320px] p-0 pointer-events-none">
+                    <div className="flex flex-row md:flex-col gap-3 md:gap-4 pointer-events-auto overflow-x-auto no-scrollbar pb-2 md:pb-0">
+                        {/* Trucks Overview Card */}
+                        <div className="flex-1 min-w-[160px] bg-white/95 backdrop-blur-md p-4 md:p-6 rounded-xl md:rounded-2xl shadow-xl shadow-black/10 border border-white/20 flex flex-row md:flex-col items-center justify-center md:justify-center text-center gap-3 md:gap-0 transition-all hover:translate-y-[-2px]">
+                            <div className="w-10 h-10 md:w-12 md:h-12 bg-surface-container-low rounded-full flex items-center justify-center md:mb-3 text-secondary shrink-0">
+                                <span className="material-symbols-outlined text-lg md:text-xl">local_shipping</span>
+                            </div>
+                            <div>
+                                <h3 className="text-xs md:text-md font-bold text-on-surface md:mb-1 whitespace-nowrap">Trucks Added</h3>
+                                <p className="text-secondary font-medium text-[10px] md:text-xs">No trucks added.</p>
+                            </div>
                         </div>
-                        <h3 className="text-lg font-bold text-on-surface mb-2">Trucks Added</h3>
-                        <p className="text-secondary font-medium text-sm">No trucks added.</p>
-                    </div>
 
-                    {/* Trips Overview Card */}
-                    <div className="bg-surface-container-lowest p-8 rounded-xl shadow-sm border border-outline-variant/20 flex flex-col items-center justify-center text-center h-64">
-                        <div className="w-16 h-16 bg-surface-container-low rounded-full flex items-center justify-center mb-4 text-secondary">
-                            <span className="material-symbols-outlined text-2xl">route</span>
+                        {/* Trips Overview Card */}
+                        <div className="flex-1 min-w-[160px] bg-white/95 backdrop-blur-md p-4 md:p-6 rounded-xl md:rounded-2xl shadow-xl shadow-black/10 border border-white/20 flex flex-row md:flex-col items-center justify-center md:justify-center text-center gap-3 md:gap-0 transition-all hover:translate-y-[-2px]">
+                            <div className="w-10 h-10 md:w-12 md:h-12 bg-surface-container-low rounded-full flex items-center justify-center md:mb-3 text-secondary shrink-0">
+                                <span className="material-symbols-outlined text-lg md:text-xl">route</span>
+                            </div>
+                            <div>
+                                <h3 className="text-xs md:text-md font-bold text-on-surface md:mb-1 whitespace-nowrap">Active Trips</h3>
+                                <p className="text-secondary font-medium text-[10px] md:text-xs">No trips added.</p>
+                            </div>
                         </div>
-                        <h3 className="text-lg font-bold text-on-surface mb-2">Active Trips</h3>
-                        <p className="text-secondary font-medium text-sm">No trips added.</p>
                     </div>
                 </div>
             </div>

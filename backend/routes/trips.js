@@ -1,6 +1,7 @@
 import express from 'express';
 import pool from '../db.js';
 import { getRoutes } from '../services/routesService.js';
+import realtimeDB from '../services/firebase.js';
 
 const router = express.Router();
 
@@ -122,6 +123,153 @@ router.delete('/:trip_id', async (req, res) => {
         });
     } catch (error) {
         console.error('Error deleting trip:', error);
+        return res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// POST /api/trips/locations
+router.post('/locations', async (req, res) => {
+    try {
+        const { token, lat, lng } = req.body;
+        const normalizedToken = typeof token === 'string' ? token.trim() : '';
+        const parsedLat = Number(lat);
+        const parsedLng = Number(lng);
+
+        if (!normalizedToken) {
+            return res.status(400).json({ error: 'token is required.' });
+        }
+
+        if (lat === undefined || lng === undefined) {
+            return res.status(400).json({ error: 'lat and lng are required.' });
+        }
+
+        if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) {
+            return res.status(400).json({ error: 'lat and lng must be valid numbers.' });
+        }
+
+        if (parsedLat < -90 || parsedLat > 90) {
+            return res.status(400).json({ error: 'lat must be between -90 and 90.' });
+        }
+
+        if (parsedLng < -180 || parsedLng > 180) {
+            return res.status(400).json({ error: 'lng must be between -180 and 180.' });
+        }
+
+        const truckResult = await pool.query(
+            'SELECT id FROM trucks WHERE truck_number = $1',
+            [normalizedToken]
+        );
+
+        if (truckResult.rowCount === 0) {
+            return res.status(404).json({ error: 'Truck not found for the provided token.' });
+        }
+
+        const truckId = truckResult.rows[0].id;
+
+        const tripResult = await pool.query(
+            `SELECT id, fleet_manager_id
+             FROM trips
+             WHERE truck_id = $1 AND status = 'active'
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            [truckId]
+        );
+
+        if (tripResult.rowCount === 0) {
+            return res.status(404).json({ error: 'No active trip found for this truck.' });
+        }
+
+        const tripId = tripResult.rows[0].id;
+        const fleetManagerId = tripResult.rows[0].fleet_manager_id;
+
+        const updateLocationResult = await pool.query(
+            `WITH latest_location AS (
+                SELECT id
+                FROM trip_locations
+                WHERE trip_id = $1
+                ORDER BY timestamp DESC, id DESC
+                LIMIT 1
+            )
+            UPDATE trip_locations tl
+            SET lat = $2,
+                lng = $3,
+                timestamp = CURRENT_TIMESTAMP
+            FROM latest_location
+            WHERE tl.id = latest_location.id
+            RETURNING tl.id, tl.trip_id, tl.lat, tl.lng, tl.timestamp`,
+            [tripId, parsedLat, parsedLng]
+        );
+
+        let savedLocation = null;
+        let action = 'inserted';
+
+        if (updateLocationResult.rowCount > 0) {
+            savedLocation = updateLocationResult.rows[0];
+            action = 'updated';
+        } else {
+            const insertLocationResult = await pool.query(
+                `INSERT INTO trip_locations (trip_id, lat, lng)
+                 VALUES ($1, $2, $3)
+                 RETURNING id, trip_id, lat, lng, timestamp`,
+                [tripId, parsedLat, parsedLng]
+            );
+
+            savedLocation = insertLocationResult.rows[0];
+        }
+
+        // push to firebase (LIVE)
+        await realtimeDB
+            .ref(`fleet_managers/${fleetManagerId}/${tripId}`)
+            .set({
+                lat: parsedLat,
+                lng: parsedLng,
+                timestamp: Date.now()
+            })
+
+        return res.status(action === 'inserted' ? 201 : 200).json({
+            message: action === 'inserted'
+                ? 'Trip location inserted successfully.'
+                : 'Trip location updated successfully.',
+            action,
+            location: savedLocation,
+        });
+    } catch (error) {
+        console.error('Error saving trip location:', error);
+        return res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// GET /api/trips/:trip_id/locations
+router.get('/:trip_id/locations', async (req, res) => {
+    try {
+        const { trip_id } = req.params;
+
+        const parsedTripId = Number(trip_id);
+
+        if (!Number.isInteger(parsedTripId) || parsedTripId <= 0) {
+            return res.status(400).json({ error: 'trip_id must be a positive integer.' });
+        }
+
+        const tripCheck = await pool.query('SELECT id FROM trips WHERE id = $1', [parsedTripId]);
+
+        if (tripCheck.rowCount === 0) {
+            return res.status(404).json({ error: 'Trip not found.' });
+        }
+
+        const locationsResult = await pool.query(
+            `SELECT trip_id, lat, lng, timestamp
+             FROM trip_locations
+             WHERE trip_id = $1
+             ORDER BY timestamp ASC, id ASC`,
+            [parsedTripId]
+        );
+
+        return res.status(200).json({
+            trip_id: parsedTripId,
+            locations: locationsResult.rows,
+        });
+    } catch (error) {
+        console.error('Error fetching trip locations:', error);
         return res.status(500).json({ error: 'Internal server error.' });
     }
 });

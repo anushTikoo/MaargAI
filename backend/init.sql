@@ -98,3 +98,12 @@ CREATE INDEX idx_trips_truck ON trips(truck_id);
 CREATE INDEX idx_trips_status ON trips(status);
 
 CREATE INDEX idx_routes_trip ON routes(trip_id);
+
+CREATE TABLE trip_locations (
+    id SERIAL PRIMARY KEY,
+    trip_id INT NOT NULL,
+    lat DOUBLE PRECISION NOT NULL,
+    lng DOUBLE PRECISION NOT NULL,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE
+);

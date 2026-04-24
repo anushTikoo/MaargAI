@@ -103,10 +103,10 @@ export async function updateTruckForCurrentUser(truckId, { truckNumber, truckTyp
     };
 
     if (advancedSpecs) {
-        if (advancedSpecs.capacity) requestBody.capacity_kg = Number(advancedSpecs.capacity);
-        if (advancedSpecs.height) requestBody.height_m = Number(advancedSpecs.height);
-        if (advancedSpecs.mileage) requestBody.mileage_kmpl = Number(advancedSpecs.mileage);
-        if (advancedSpecs.weight) requestBody.truck_weight = Number(advancedSpecs.weight);
+        requestBody.capacity_kg = Number(advancedSpecs.capacity);
+        requestBody.height_m = Number(advancedSpecs.height);
+        requestBody.mileage_kmpl = Number(advancedSpecs.mileage);
+        requestBody.truck_weight = Number(advancedSpecs.weight);
     }
 
     const response = await fetch(`${apiBaseUrl}/api/trucks/${encodeURIComponent(truckId)}`, {

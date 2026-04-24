@@ -3,6 +3,7 @@ DROP TABLE IF EXISTS routes CASCADE;
 DROP TABLE IF EXISTS trips CASCADE;
 DROP TABLE IF EXISTS trucks CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
+DROP TABLE IF EXISTS trip_locations CASCADE;
 
 -- Users
 CREATE TABLE users (
@@ -54,14 +55,14 @@ CREATE TABLE trips (
     dest_lat DOUBLE PRECISION NOT NULL,
     dest_lng DOUBLE PRECISION NOT NULL,
     deadline_timestamp TIMESTAMP,
-    status VARCHAR(20) DEFAULT 'active',
+    status VARCHAR(20) DEFAULT 'not started',
     baseline_eta_seconds INT,
     baseline_distance_meters INT,
     current_route_id INT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT chk_trip_status
-        CHECK (status IN ('active','completed')),
+        CHECK (status IN ('not started','active','completed')),
 
     CONSTRAINT chk_trip_source_not_empty
         CHECK (length(trim(source)) > 0),

@@ -15,7 +15,7 @@ export default function VehicleList() {
     const [editTruckNumber, setEditTruckNumber] = useState('');
     const [editTruckType, setEditTruckType] = useState('Light');
     const [editAdvancedOpen, setEditAdvancedOpen] = useState(false);
-    
+
     const [editCapacity, setEditCapacity] = useState('');
     const [editHeight, setEditHeight] = useState('');
     const [editMileage, setEditMileage] = useState('');
@@ -104,14 +104,14 @@ export default function VehicleList() {
         setEditingTruckId(truck.id);
         setEditTruckNumber(truck.truck_number || '');
         setEditTruckType((truck.truck_type || 'Light').charAt(0).toUpperCase() + (truck.truck_type || 'light').slice(1));
-        
+
         // Populate advanced fields
         setEditCapacity(truck.capacity_kg || '');
         setEditHeight(truck.height_m || '');
         setEditMileage(truck.mileage_kmpl || '');
         setEditWeight(truck.truck_weight || '');
-        
-        setEditAdvancedOpen(truck.is_custom || false);
+
+        setEditAdvancedOpen(false);
         setEditModalOpen(true);
     };
 
@@ -226,7 +226,7 @@ export default function VehicleList() {
                                 >
                                     <div className="absolute top-0 left-0 w-2 h-full bg-primary/80 transition-transform origin-bottom group-hover:scale-y-110"></div>
 
-                                    <div className="w-16 h-16 rounded-full bg-primary-container/10 flex-shrink-0 flex items-center justify-center border border-primary/20">
+                                    <div className="w-16 h-16 rounded-full bg-primary-container/10 shrink-0 flex items-center justify-center border border-primary/20">
                                         <span className="material-symbols-outlined text-primary text-3xl" style={{ fontVariationSettings: "'FILL' 1" }}>
                                             {truck.truck_type?.toLowerCase() === 'trailer' ? 'rv_hookup' : 'local_shipping'}
                                         </span>
@@ -235,7 +235,7 @@ export default function VehicleList() {
                                     <div className="flex-1 w-full">
                                         <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-3">
                                             <div className="flex flex-col gap-1">
-                                                <p className="text-xs uppercase tracking-[0.1em] text-secondary font-bold">Truck Number</p>
+                                                <p className="text-xs uppercase tracking-widest text-secondary font-bold">Truck Number</p>
                                                 <h3 className="text-2xl font-black text-on-surface tracking-tight uppercase leading-none">
                                                     {truck.truck_number}
                                                 </h3>
@@ -329,8 +329,8 @@ export default function VehicleList() {
                                 <span className="material-symbols-outlined text-primary text-3xl">edit_document</span>
                                 Edit Vehicle
                             </h2>
-                            <button 
-                                onClick={() => setEditModalOpen(false)} 
+                            <button
+                                onClick={() => setEditModalOpen(false)}
                                 className="text-secondary hover:text-on-surface cursor-pointer border-none bg-transparent"
                             >
                                 <span className="material-symbols-outlined text-3xl">close</span>
@@ -451,7 +451,7 @@ export default function VehicleList() {
 
                         <div className="flex flex-col items-end gap-3 pt-8 mt-6 border-t border-outline-variant/20">
                             {editError ? <p className="text-sm text-error font-medium">{editError}</p> : null}
-                            
+
                             <div className="flex gap-4 w-full md:w-auto">
                                 <button
                                     type="button"

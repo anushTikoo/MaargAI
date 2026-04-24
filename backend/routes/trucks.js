@@ -1,6 +1,6 @@
 import express from 'express';
 import pool from '../db.js';
-import { TRUCK_DEFAULTS, inferCategory, insertTruckRecord } from '../utils/truckPersistence.js';
+import { buildTruckPayload, insertTruckRecord } from '../utils/truckPersistence.js';
 
 const router = express.Router();
 
@@ -69,57 +69,15 @@ router.get('/:id', async (req, res) => {
 // Update an existing truck
 router.put('/:id', async (req, res) => {
     const { id } = req.params;
-    let {
-        fleet_manager_id,
-        truck_number,
-        capacity_kg,
-        height_m,
-        mileage_kmpl,
-        truck_type,
-        truck_weight
-    } = req.body;
 
-    if (!fleet_manager_id || !truck_number) {
-        return res.status(400).json({ error: 'fleet_manager_id and truck_number are required.' });
+    let payload;
+
+    try {
+        payload = buildTruckPayload(req.body);
+    } catch (error) {
+        const statusCode = Number.isInteger(error?.statusCode) ? error.statusCode : 400;
+        return res.status(statusCode).json({ error: error.message || 'Invalid truck payload.' });
     }
-
-    if (!truck_type && !capacity_kg) {
-        return res.status(400).json({ error: 'At least one of truck_type or capacity_kg is required.' });
-    }
-
-    let final_type = truck_type ? truck_type.toLowerCase() : null;
-    let final_capacity = capacity_kg ? parseFloat(capacity_kg) : null;
-
-    if (final_capacity) {
-        final_type = inferCategory(final_capacity);
-    } else if (final_type) {
-        if (!TRUCK_DEFAULTS[final_type]) {
-            return res.status(400).json({ error: 'Invalid truck_type provided.' });
-        }
-        final_capacity = TRUCK_DEFAULTS[final_type].capacity;
-    }
-
-    const defaults = TRUCK_DEFAULTS[final_type];
-
-    if (!defaults) {
-        return res.status(400).json({ error: 'Invalid truck specifications could not be resolved.' });
-    }
-
-    const final_height = height_m ? parseFloat(height_m) : defaults.height;
-    const final_mileage = mileage_kmpl ? parseFloat(mileage_kmpl) : defaults.mileage;
-    const final_weight = truck_weight ? parseFloat(truck_weight) : Math.round(final_capacity * 1.5);
-
-    const is_custom = !!(
-        req.body.height_m ||
-        req.body.mileage_kmpl ||
-        req.body.truck_weight ||
-        (req.body.capacity_kg && parseFloat(req.body.capacity_kg) !== defaults.capacity)
-    );
-
-    if (final_capacity <= 0) return res.status(400).json({ error: 'capacity_kg must be > 0' });
-    if (final_height < 1.5 || final_height > 5.0) return res.status(400).json({ error: 'height_m must be between 1.5 and 5.0' });
-    if (final_mileage <= 0) return res.status(400).json({ error: 'mileage_kmpl must be > 0' });
-    if (final_weight <= 0) return res.status(400).json({ error: 'truck_weight must be > 0' });
 
     try {
         const result = await pool.query(
@@ -133,7 +91,17 @@ router.put('/:id', async (req, res) => {
                 is_custom = $7
             WHERE id = $8 AND fleet_manager_id = $9
             RETURNING *`,
-            [truck_number, final_type, final_capacity, final_height, final_mileage, final_weight, is_custom, id, fleet_manager_id]
+            [
+                payload.truck_number,
+                payload.truck_type,
+                payload.capacity_kg,
+                payload.height_m,
+                payload.mileage_kmpl,
+                payload.truck_weight,
+                payload.is_custom,
+                id,
+                payload.fleet_manager_id,
+            ]
         );
 
         if (result.rows.length === 0) {

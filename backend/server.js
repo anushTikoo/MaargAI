@@ -6,6 +6,8 @@ import googleAuthRoutes from './routes/googleAuth.js';
 import trucksRoutes from './routes/trucks.js';
 import tripsRoutes from './routes/trips.js';
 import fleetUploadRoutes from './routes/fleetUpload.js';
+import weatherRoutes from './routes/weather.js';
+
 
 dotenv.config();
 
@@ -23,6 +25,8 @@ app.use('/api/auth/google', googleAuthRoutes);
 app.use('/api/trucks', trucksRoutes);
 app.use('/api/trips', tripsRoutes);
 app.use('/api/fleet', fleetUploadRoutes);
+app.use('/api/weather', weatherRoutes);
+
 
 // Basic health check
 app.get('/', (req, res) => {

@@ -260,7 +260,7 @@ export default function Overview() {
                 return;
             }
 
-            if (!window.google?.maps) {
+            if (!window.google?.maps?.Map) {
                 retryTimerId = window.setTimeout(initializeMap, 200);
                 return;
             }

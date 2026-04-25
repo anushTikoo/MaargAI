@@ -114,7 +114,7 @@ router.get('/active-map', async (req, res) => {
             JOIN trucks tr ON tr.id = t.truck_id
             LEFT JOIN routes current_route ON current_route.id = t.current_route_id
             LEFT JOIN LATERAL (
-                SELECT id, route_index, polyline, distance_meters, duration_seconds, has_tolls
+                SELECT id, route_index, polyline, distance_meters, duration_seconds, has_tolls, toll_cost
                 FROM routes
                 WHERE trip_id = t.id
                 ORDER BY route_index ASC
@@ -220,7 +220,7 @@ router.get('/:id/intelligence', async (req, res) => {
 
         // 1. Verify trip exists and get current route + truck mileage
         const tripRes = await pool.query(
-            `SELECT t.id, t.current_route_id, tr.mileage_kmpl
+            `SELECT t.id, t.current_route_id, t.deadline_timestamp, tr.mileage_kmpl
              FROM trips t
              JOIN trucks tr ON tr.id = t.truck_id
              WHERE t.id = $1`,
@@ -232,7 +232,8 @@ router.get('/:id/intelligence', async (req, res) => {
         }
 
         const currentRouteId = tripRes.rows[0].current_route_id;
-        const truckMileage = parseFloat(tripRes.rows[0].mileage_kmpl) || 4.0; // Default to 4 kmpl if not set
+        const tripDeadline = tripRes.rows[0].deadline_timestamp; // Might be null
+        const truckMileage = parseFloat(tripRes.rows[0].mileage_kmpl) || 4.0; 
         const FUEL_PRICE_PER_LITRE = 90;
 
         // 2. Fetch ALL routes for this trip, ordered by route_index (A, B, C...)
@@ -339,6 +340,36 @@ router.get('/:id/intelligence', async (req, res) => {
                         metrics.reliability_status = 'unstable';
                     }
                 }
+                
+                // --- NEW CALCULATIONS ---
+                const fuelCost = (route.distance_meters / 1000 / truckMileage) * FUEL_PRICE_PER_LITRE;
+
+                // Deadline Analysis (Slack Time)
+                let deadlineAnalysis = null;
+                if (tripDeadline) {
+                    const trafficMultiplier = metrics.avg_delay || 1.0;
+                    const adjustedDurationSec = route.duration_seconds * trafficMultiplier;
+                    
+                    const now = new Date();
+                    const etaDate = new Date(now.getTime() + (adjustedDurationSec * 1000));
+                    const deadlineDate = new Date(tripDeadline);
+                    
+                    const slackMs = deadlineDate.getTime() - etaDate.getTime();
+                    const slackMinutes = Math.floor(slackMs / 60000);
+                    
+                    let status = 'on_track';
+                    if (slackMinutes < 0) {
+                        status = 'late';
+                    } else if (slackMinutes <= 15) {
+                        status = 'critical';
+                    }
+
+                    deadlineAnalysis = {
+                        predicted_arrival: etaDate.toISOString(),
+                        slack_time_minutes: slackMinutes,
+                        status: status
+                    };
+                }
 
                 return {
                     route_id: route.id,
@@ -349,7 +380,10 @@ router.get('/:id/intelligence', async (req, res) => {
                     toll_cost: parseFloat(route.toll_cost || 0),
                     fuel_cost: parseFloat(fuelCost.toFixed(2)),
                     is_current: route.id === currentRouteId,
-                    metrics,
+                    metrics: {
+                        ...metrics,
+                        deadline_analysis: deadlineAnalysis
+                    },
                     segments
                 };
             })

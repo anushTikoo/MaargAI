@@ -108,3 +108,19 @@ CREATE TABLE trip_locations (
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE
 );
+
+-- Trip Segments (For AI Analysis)
+CREATE TABLE trip_segments (
+    id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    route_id INT NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
+    segment_index INT NOT NULL,
+    start_lat DOUBLE PRECISION NOT NULL,
+    start_lng DOUBLE PRECISION NOT NULL,
+    end_lat DOUBLE PRECISION NOT NULL,
+    end_lng DOUBLE PRECISION NOT NULL,
+    distance_meters NUMERIC(10,2) NOT NULL,
+    points_json JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_trip_segments_route ON trip_segments(route_id);

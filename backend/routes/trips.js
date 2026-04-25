@@ -114,7 +114,7 @@ router.get('/active-map', async (req, res) => {
             JOIN trucks tr ON tr.id = t.truck_id
             LEFT JOIN routes current_route ON current_route.id = t.current_route_id
             LEFT JOIN LATERAL (
-                SELECT id, route_index, polyline, distance_meters, duration_seconds, has_tolls
+                SELECT id, route_index, polyline, distance_meters, duration_seconds, has_tolls, toll_cost
                 FROM routes
                 WHERE trip_id = t.id
                 ORDER BY route_index ASC

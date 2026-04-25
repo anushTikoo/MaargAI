@@ -279,6 +279,8 @@ router.get('/:id/intelligence', async (req, res) => {
                     congestion_density: null,
                     avg_weather: null,
                     max_weather: null,
+                    reliability_score: null,
+                    reliability_status: 'pending',
                     total_segments: segments.length,
                     analyzed_segments: validRatios.length,
                     weather_analyzed_segments: validWeather.length,
@@ -298,6 +300,36 @@ router.get('/:id/intelligence', async (req, res) => {
                     const weatherSum = validWeather.reduce((a, b) => a + b, 0);
                     metrics.avg_weather = parseFloat((weatherSum / validWeather.length).toFixed(3));
                     metrics.max_weather = parseFloat(Math.max(...validWeather).toFixed(3));
+                }
+
+                // Reliability Score (Maarg Index)
+                // Only compute if at least one category of data is available.
+                // Traffic: use excess delay (ratio - 1) so a perfectly on-time route contributes 0.
+                // Weather: raw score already starts at 0 for clear/calm conditions.
+                // Thresholds: 0–0.3 stable | 0.3–0.7 risky | 0.7+ unstable
+                const hasTraffic = metrics.avg_delay !== null;
+                const hasWeather = metrics.avg_weather !== null;
+
+                if (hasTraffic || hasWeather) {
+                    const excessAvg  = hasTraffic ? Math.max(0, metrics.avg_delay - 1)  : 0;
+                    const excessMax  = hasTraffic ? Math.max(0, metrics.max_delay - 1)  : 0;
+                    const density    = hasTraffic ? metrics.congestion_density           : 0;
+                    const avgWeather = hasWeather ? metrics.avg_weather                  : 0;
+                    const maxWeather = hasWeather ? metrics.max_weather                  : 0;
+
+                    const trafficRisk = (excessAvg * 0.40) + (excessMax * 0.30) + (density * 0.20);
+                    const weatherRisk = (avgWeather * 0.10) + (maxWeather * 0.30);
+
+                    const raw = trafficRisk + weatherRisk;
+                    metrics.reliability_score = parseFloat(raw.toFixed(3));
+
+                    if (raw < 0.3) {
+                        metrics.reliability_status = 'stable';
+                    } else if (raw < 0.7) {
+                        metrics.reliability_status = 'risky';
+                    } else {
+                        metrics.reliability_status = 'unstable';
+                    }
                 }
 
                 return {

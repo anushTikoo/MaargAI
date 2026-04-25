@@ -1,4 +1,5 @@
 -- Reset
+DROP TABLE IF EXISTS trip_segments CASCADE;
 DROP TABLE IF EXISTS routes CASCADE;
 DROP TABLE IF EXISTS trips CASCADE;
 DROP TABLE IF EXISTS trucks CASCADE;
@@ -120,7 +121,10 @@ CREATE TABLE trip_segments (
     end_lng DOUBLE PRECISION NOT NULL,
     distance_meters NUMERIC(10,2) NOT NULL,
     points_json JSONB NOT NULL,
+    duration_in_traffic_seconds INT,
+    delay_ratio NUMERIC(6,3),
+    traffic_checked_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_trip_segments_route ON trip_segments(route_id);
+CREATE INDEX idx_trip_segments_route ON trip_segments(route_id);

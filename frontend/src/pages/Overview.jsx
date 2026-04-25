@@ -125,25 +125,17 @@ function decodePolyline(encodedPolyline) {
     return path;
 }
 
-function getTruckMarkerIcon() {
-    const truckSvg = `<svg width="36" height="36" viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg"><circle cx="18" cy="18" r="17" fill="#1f2937"/><path d="M8 12h14v7h3l3 3v3h-2a3 3 0 0 1-6 0h-4a3 3 0 0 1-6 0H8v-13zm18 2v5h-4v-5h4z" fill="#f9fafb"/></svg>`;
-
-    return {
-        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(truckSvg)}`,
-        scaledSize: new window.google.maps.Size(36, 36),
-        anchor: new window.google.maps.Point(18, 18),
-    };
+function createTruckMarkerElement() {
+    const el = document.createElement('div');
+    el.style.cssText = 'width:36px;height:36px;cursor:pointer;';
+    el.innerHTML = `<svg width="36" height="36" viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg"><circle cx="18" cy="18" r="17" fill="#1f2937"/><path d="M8 12h14v7h3l3 3v3h-2a3 3 0 0 1-6 0h-4a3 3 0 0 1-6 0H8v-13zm18 2v5h-4v-5h4z" fill="#f9fafb"/></svg>`;
+    return el;
 }
 
-function getTripPointMarkerIcon(fillColor) {
-    return {
-        path: window.google.maps.SymbolPath.CIRCLE,
-        scale: 8,
-        fillColor,
-        fillOpacity: 1,
-        strokeColor: '#ffffff',
-        strokeWeight: 2,
-    };
+function createPointMarkerElement(color) {
+    const el = document.createElement('div');
+    el.style.cssText = `width:16px;height:16px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3);cursor:pointer;`;
+    return el;
 }
 
 function clearTripLayer(layer) {
@@ -160,11 +152,11 @@ function clearTripLayer(layer) {
     }
 
     if (layer.sourceMarker) {
-        layer.sourceMarker.setMap(null);
+        layer.sourceMarker.map = null;
     }
 
     if (layer.destinationMarker) {
-        layer.destinationMarker.setMap(null);
+        layer.destinationMarker.map = null;
     }
 
     if (layer.routePolyline) {
@@ -176,7 +168,7 @@ function clearTripLayer(layer) {
     }
 
     if (layer.truckMarker) {
-        layer.truckMarker.setMap(null);
+        layer.truckMarker.map = null;
     }
 }
 
@@ -379,22 +371,24 @@ export default function Overview() {
             const truckPosition = { lat: Number(liveLocation.lat), lng: Number(liveLocation.lng) };
             const routePath = decodePolyline(trip?.route?.polyline);
 
+            const { AdvancedMarkerElement } = window.google.maps.marker;
+
             const sourceMarker = isValidCoordinate(sourceLat, sourceLng)
-                ? new window.google.maps.Marker({
+                ? new AdvancedMarkerElement({
                     map,
                     position: sourcePosition,
                     title: `Source (${sourceLat.toFixed(5)}, ${sourceLng.toFixed(5)})`,
-                    icon: getTripPointMarkerIcon('#059669'),
+                    content: createPointMarkerElement('#059669'),
                     zIndex: 400,
                 })
                 : null;
 
             const destinationMarker = isValidCoordinate(destinationLat, destinationLng)
-                ? new window.google.maps.Marker({
+                ? new AdvancedMarkerElement({
                     map,
                     position: destinationPosition,
                     title: `Destination (${destinationLat.toFixed(5)}, ${destinationLng.toFixed(5)})`,
-                    icon: getTripPointMarkerIcon('#dc2626'),
+                    content: createPointMarkerElement('#dc2626'),
                     zIndex: 400,
                 })
                 : null;
@@ -423,11 +417,11 @@ export default function Overview() {
                 })
                 : null;
 
-            const truckMarker = new window.google.maps.Marker({
+            const truckMarker = new AdvancedMarkerElement({
                 map,
                 position: truckPosition,
                 title: `Truck (${formatCoordinate(truckPosition.lat)}, ${formatCoordinate(truckPosition.lng)})`,
-                icon: getTruckMarkerIcon(),
+                content: createTruckMarkerElement(),
                 zIndex: 1000,
             });
 

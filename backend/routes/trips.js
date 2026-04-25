@@ -3,6 +3,7 @@ import pool from '../db.js';
 import { getRoutes } from '../services/routesService.js';
 import realtimeDB from '../services/firebase.js';
 import { decodePolyline, segmentRoute } from '../services/segmentationService.js';
+import { fetchSegmentTrafficDurations } from '../services/trafficService.js';
 
 const router = express.Router();
 const START_TRIP_RADIUS_METERS = 250;
@@ -194,6 +195,132 @@ router.get('/active-map', async (req, res) => {
         });
     } catch (error) {
         console.error('Error fetching active map trip:', error);
+        return res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+/**
+ * GET /api/trips/:id/intelligence
+ * Compares ALL routes for a trip using segment-level traffic analysis.
+ * Returns per-route metrics (avg_delay, max_delay, congestion_density)
+ * and recommends the best route based on lowest avg_delay.
+ */
+router.get('/:id/intelligence', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const tripId = parseInt(id);
+
+        if (isNaN(tripId)) {
+            return res.status(400).json({ error: 'Invalid trip ID.' });
+        }
+
+        // 1. Verify trip exists and get the currently assigned route
+        const tripRes = await pool.query(
+            'SELECT id, current_route_id FROM trips WHERE id = $1',
+            [tripId]
+        );
+
+        if (tripRes.rowCount === 0) {
+            return res.status(404).json({ error: 'Trip not found.' });
+        }
+
+        const currentRouteId = tripRes.rows[0].current_route_id;
+
+        // 2. Fetch ALL routes for this trip, ordered by route_index (A, B, C...)
+        const routesRes = await pool.query(
+            `SELECT id, route_index, distance_meters, duration_seconds, has_tolls
+             FROM routes
+             WHERE trip_id = $1
+             ORDER BY route_index ASC`,
+            [tripId]
+        );
+
+        if (routesRes.rowCount === 0) {
+            return res.status(200).json({
+                trip_id: tripId,
+                current_route_id: currentRouteId,
+                routes: [],
+                recommended_route_id: null,
+                message: 'No routes found for this trip.'
+            });
+        }
+
+        // 3. For each route, fetch its segments and compute metrics
+        const routeAnalyses = await Promise.all(
+            routesRes.rows.map(async (route) => {
+                const segmentsRes = await pool.query(
+                    `SELECT
+                        segment_index, start_lat, start_lng, end_lat, end_lng,
+                        distance_meters, duration_in_traffic_seconds, delay_ratio,
+                        traffic_checked_at, points_json
+                     FROM trip_segments
+                     WHERE route_id = $1
+                     ORDER BY segment_index ASC`,
+                    [route.id]
+                );
+
+                const segments = segmentsRes.rows;
+                const validRatios = segments
+                    .map(s => parseFloat(s.delay_ratio))
+                    .filter(r => Number.isFinite(r));
+
+                let metrics = {
+                    avg_delay: null,
+                    max_delay: null,
+                    congestion_density: null,
+                    total_segments: segments.length,
+                    analyzed_segments: validRatios.length
+                };
+
+                if (validRatios.length > 0) {
+                    const sum = validRatios.reduce((a, b) => a + b, 0);
+                    metrics.avg_delay = parseFloat((sum / validRatios.length).toFixed(3));
+                    metrics.max_delay = parseFloat(Math.max(...validRatios).toFixed(3));
+
+                    // Density: fraction of segments where delay_ratio > 1.5 (Heavy congestion)
+                    const congestedCount = validRatios.filter(r => r > 1.5).length;
+                    metrics.congestion_density = parseFloat((congestedCount / validRatios.length).toFixed(3));
+                }
+
+                return {
+                    route_id: route.id,
+                    route_index: route.route_index,
+                    distance_meters: route.distance_meters,
+                    duration_seconds: route.duration_seconds,
+                    has_tolls: route.has_tolls,
+                    is_current: route.id === currentRouteId,
+                    metrics,
+                    segments
+                };
+            })
+        );
+
+        // 4. Recommend the route with the lowest avg_delay among those with traffic data
+        const routesWithData = routeAnalyses.filter(r => r.metrics.avg_delay !== null);
+        let recommendedRouteId = null;
+
+        if (routesWithData.length > 0) {
+            const best = routesWithData.reduce((prev, curr) =>
+                curr.metrics.avg_delay < prev.metrics.avg_delay ? curr : prev
+            );
+            recommendedRouteId = best.route_id;
+        } else if (routeAnalyses.length > 0) {
+            // Fallback: recommend shortest distance if no traffic data available
+            const shortest = routeAnalyses.reduce((prev, curr) =>
+                curr.distance_meters < prev.distance_meters ? curr : prev
+            );
+            recommendedRouteId = shortest.route_id;
+        }
+
+        return res.status(200).json({
+            trip_id: tripId,
+            current_route_id: currentRouteId,
+            recommended_route_id: recommendedRouteId,
+            routes: routeAnalyses
+        });
+
+    } catch (error) {
+        console.error('Error fetching trip intelligence:', error);
         return res.status(500).json({ error: 'Internal server error.' });
     }
 });
@@ -594,29 +721,66 @@ router.post('/create-trip', async (req, res) => {
                 const currentRouteId = routeRes.rows[0].id;
                 routeMapping[routeIndex] = currentRouteId;
 
-                // Task: Segment the route for intelligence layer
+                // Intelligence layer: segment + traffic enrichment
                 if (r.polyline) {
                     const decodedPoints = decodePolyline(r.polyline);
                     const targetSegmentKm = Math.max(8, Math.min(20, (r.distanceMeters / 1000) / 10));
                     const segments = segmentRoute(decodedPoints, targetSegmentKm);
 
-                    for (let sIdx = 0; sIdx < segments.length; sIdx++) {
-                        const seg = segments[sIdx];
-                        const insertSegmentQuery = `
+                    if (segments.length > 0) {
+                        // Baseline: totalRouteDuration / numSegments (no per-segment API assumption)
+                        const avgSegmentTime = r.durationSeconds / segments.length;
+
+                        // Batch fetch real-time traffic durations — one API call for all segment pairs
+                        let trafficDurations = new Array(segments.length).fill(null);
+                        try {
+                            trafficDurations = await fetchSegmentTrafficDurations(segments);
+                        } catch (trafficErr) {
+                            // Traffic enrichment is best-effort: don't fail trip creation
+                            console.warn(`Traffic enrichment failed for route ${currentRouteId}:`, trafficErr.message);
+                        }
+
+                        const trafficCheckedAt = new Date().toISOString();
+
+                        // Bulk insert all segments in a single multi-row VALUES query
+                        const valuePlaceholders = [];
+                        const valueParams = [];
+                        let pIdx = 1;
+
+                        for (let sIdx = 0; sIdx < segments.length; sIdx++) {
+                            const seg = segments[sIdx];
+                            const durationInTraffic = trafficDurations[sIdx]; // null if unavailable
+                            const delayRatio = (durationInTraffic !== null && avgSegmentTime > 0)
+                                ? parseFloat((durationInTraffic / avgSegmentTime).toFixed(3))
+                                : null;
+
+                            valuePlaceholders.push(
+                                `($${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++})`
+                            );
+                            valueParams.push(
+                                currentRouteId,
+                                sIdx,
+                                seg.start_lat,
+                                seg.start_lng,
+                                seg.end_lat,
+                                seg.end_lng,
+                                seg.distance,
+                                JSON.stringify(seg.points),
+                                durationInTraffic,
+                                delayRatio,
+                                trafficCheckedAt
+                            );
+                        }
+
+                        const bulkInsertQuery = `
                             INSERT INTO trip_segments (
-                                route_id, segment_index, start_lat, start_lng, end_lat, end_lng, distance_meters, points_json
-                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                                route_id, segment_index,
+                                start_lat, start_lng, end_lat, end_lng,
+                                distance_meters, points_json,
+                                duration_in_traffic_seconds, delay_ratio, traffic_checked_at
+                            ) VALUES ${valuePlaceholders.join(', ')}
                         `;
-                        await client.query(insertSegmentQuery, [
-                            currentRouteId,
-                            sIdx,
-                            seg.start_lat,
-                            seg.start_lng,
-                            seg.end_lat,
-                            seg.end_lng,
-                            seg.distance,
-                            JSON.stringify(seg.points)
-                        ]);
+                        await client.query(bulkInsertQuery, valueParams);
                     }
                 }
             }

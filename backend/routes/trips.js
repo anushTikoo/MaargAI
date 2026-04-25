@@ -2,6 +2,7 @@ import express from 'express';
 import pool from '../db.js';
 import { getRoutes } from '../services/routesService.js';
 import realtimeDB from '../services/firebase.js';
+import { decodePolyline, segmentRoute } from '../services/segmentationService.js';
 
 const router = express.Router();
 const START_TRIP_RADIUS_METERS = 250;
@@ -590,7 +591,34 @@ router.post('/create-trip', async (req, res) => {
                 ]);
 
                 // Store mapping: index -> route_id
-                routeMapping[routeIndex] = routeRes.rows[0].id;
+                const currentRouteId = routeRes.rows[0].id;
+                routeMapping[routeIndex] = currentRouteId;
+
+                // Task: Segment the route for intelligence layer
+                if (r.polyline) {
+                    const decodedPoints = decodePolyline(r.polyline);
+                    const targetSegmentKm = Math.max(8, Math.min(20, (r.distanceMeters / 1000) / 10));
+                    const segments = segmentRoute(decodedPoints, targetSegmentKm);
+
+                    for (let sIdx = 0; sIdx < segments.length; sIdx++) {
+                        const seg = segments[sIdx];
+                        const insertSegmentQuery = `
+                            INSERT INTO trip_segments (
+                                route_id, segment_index, start_lat, start_lng, end_lat, end_lng, distance_meters, points_json
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                        `;
+                        await client.query(insertSegmentQuery, [
+                            currentRouteId,
+                            sIdx,
+                            seg.start_lat,
+                            seg.start_lng,
+                            seg.end_lat,
+                            seg.end_lng,
+                            seg.distance,
+                            JSON.stringify(seg.points)
+                        ]);
+                    }
+                }
             }
 
             // Phase 5: Task 11 & 12 - Select Baseline Route & Update Trip

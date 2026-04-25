@@ -4,6 +4,7 @@ import { getRoutes } from '../services/routesService.js';
 import realtimeDB from '../services/firebase.js';
 import { decodePolyline, segmentRoute } from '../services/segmentationService.js';
 import { fetchSegmentTrafficDurations } from '../services/trafficService.js';
+import { fetchSegmentWeatherScores } from '../services/weatherService.js';
 
 const router = express.Router();
 const START_TRIP_RADIUS_METERS = 250;
@@ -252,7 +253,8 @@ router.get('/:id/intelligence', async (req, res) => {
                     `SELECT
                         segment_index, start_lat, start_lng, end_lat, end_lng,
                         distance_meters, duration_in_traffic_seconds, delay_ratio,
-                        traffic_checked_at, points_json
+                        traffic_checked_at, points_json,
+                        weather_score, weather_main
                      FROM trip_segments
                      WHERE route_id = $1
                      ORDER BY segment_index ASC`,
@@ -260,16 +262,26 @@ router.get('/:id/intelligence', async (req, res) => {
                 );
 
                 const segments = segmentsRes.rows;
+
+                // Traffic metrics
                 const validRatios = segments
                     .map(s => parseFloat(s.delay_ratio))
                     .filter(r => Number.isFinite(r));
+
+                // Weather metrics
+                const validWeather = segments
+                    .map(s => parseFloat(s.weather_score))
+                    .filter(w => Number.isFinite(w));
 
                 let metrics = {
                     avg_delay: null,
                     max_delay: null,
                     congestion_density: null,
+                    avg_weather: null,
+                    max_weather: null,
                     total_segments: segments.length,
-                    analyzed_segments: validRatios.length
+                    analyzed_segments: validRatios.length,
+                    weather_analyzed_segments: validWeather.length,
                 };
 
                 if (validRatios.length > 0) {
@@ -280,6 +292,12 @@ router.get('/:id/intelligence', async (req, res) => {
                     // Density: fraction of segments where delay_ratio > 1.5 (Heavy congestion)
                     const congestedCount = validRatios.filter(r => r > 1.5).length;
                     metrics.congestion_density = parseFloat((congestedCount / validRatios.length).toFixed(3));
+                }
+
+                if (validWeather.length > 0) {
+                    const weatherSum = validWeather.reduce((a, b) => a + b, 0);
+                    metrics.avg_weather = parseFloat((weatherSum / validWeather.length).toFixed(3));
+                    metrics.max_weather = parseFloat(Math.max(...validWeather).toFixed(3));
                 }
 
                 return {
@@ -295,27 +313,9 @@ router.get('/:id/intelligence', async (req, res) => {
             })
         );
 
-        // 4. Recommend the route with the lowest avg_delay among those with traffic data
-        const routesWithData = routeAnalyses.filter(r => r.metrics.avg_delay !== null);
-        let recommendedRouteId = null;
-
-        if (routesWithData.length > 0) {
-            const best = routesWithData.reduce((prev, curr) =>
-                curr.metrics.avg_delay < prev.metrics.avg_delay ? curr : prev
-            );
-            recommendedRouteId = best.route_id;
-        } else if (routeAnalyses.length > 0) {
-            // Fallback: recommend shortest distance if no traffic data available
-            const shortest = routeAnalyses.reduce((prev, curr) =>
-                curr.distance_meters < prev.distance_meters ? curr : prev
-            );
-            recommendedRouteId = shortest.route_id;
-        }
-
         return res.status(200).json({
             trip_id: tripId,
             current_route_id: currentRouteId,
-            recommended_route_id: recommendedRouteId,
             routes: routeAnalyses
         });
 
@@ -324,6 +324,92 @@ router.get('/:id/intelligence', async (req, res) => {
         return res.status(500).json({ error: 'Internal server error.' });
     }
 });
+
+/**
+ * Async helper: enrich all segment rows for every route of a trip
+ * with real-time traffic (delay_ratio) and weather scores.
+ * Called fire-and-forget on trip activation.
+ */
+async function enrichTripSegments(tripId) {
+    console.log(`[Enrichment] Starting for trip ${tripId}...`);
+
+    const routesRes = await pool.query(
+        `SELECT r.id AS route_id, r.duration_seconds
+         FROM routes r
+         WHERE r.trip_id = $1
+         ORDER BY r.route_index ASC`,
+        [tripId]
+    );
+
+    console.log(`[Enrichment] Found ${routesRes.rowCount} route(s) for trip ${tripId}.`);
+
+    for (const route of routesRes.rows) {
+        try {
+            const segRes = await pool.query(
+                `SELECT id, segment_index, start_lat, start_lng, end_lat, end_lng
+                 FROM trip_segments
+                 WHERE route_id = $1
+                 ORDER BY segment_index ASC`,
+                [route.route_id]
+            );
+
+            const segments = segRes.rows;
+            console.log(`[Enrichment] Route ${route.route_id}: ${segments.length} segment(s) found.`);
+
+            if (segments.length === 0) continue;
+
+            const avgSegmentTime = route.duration_seconds / segments.length;
+
+            // --- Traffic ---
+            let trafficDurations = new Array(segments.length).fill(null);
+            try {
+                trafficDurations = await fetchSegmentTrafficDurations(segments);
+            } catch (err) {
+                console.warn(`[Enrichment] Traffic failed for route ${route.route_id}:`, err.message);
+            }
+
+            // --- Weather ---
+            let weatherResults = new Array(segments.length).fill(null);
+            try {
+                weatherResults = await fetchSegmentWeatherScores(segments);
+            } catch (err) {
+                console.warn(`[Enrichment] Weather failed for route ${route.route_id}:`, err.message);
+            }
+
+            const trafficCheckedAt = new Date().toISOString();
+
+            // Update each segment row
+            for (let i = 0; i < segments.length; i++) {
+                const seg = segments[i];
+                const durationInTraffic = trafficDurations[i];
+                const delayRatio = (durationInTraffic !== null && avgSegmentTime > 0)
+                    ? parseFloat((durationInTraffic / avgSegmentTime).toFixed(3))
+                    : null;
+                const weatherScore = weatherResults[i]?.score ?? null;
+                const weatherMain = weatherResults[i]?.weather_main ?? null;
+
+                await pool.query(
+                    `UPDATE trip_segments
+                     SET duration_in_traffic_seconds = $1,
+                         delay_ratio                 = $2,
+                         traffic_checked_at          = $3,
+                         weather_score               = $4,
+                         weather_main                = $5
+                     WHERE id = $6`,
+                    [durationInTraffic, delayRatio, trafficCheckedAt, weatherScore, weatherMain, seg.id]
+                );
+            }
+
+            console.log(`[Enrichment] Route ${route.route_id}: ${segments.length} segments updated.`);
+        } catch (routeErr) {
+            console.error(`[Enrichment] Error processing route ${route.route_id}:`, routeErr.message);
+            // Continue to the next route even if this one fails
+        }
+    }
+
+    console.log(`[Enrichment] Complete for trip ${tripId}.`);
+}
+
 
 // GET /api/trips/:trip_id/routes?fleet_manager_id=123
 router.get('/:trip_id/routes', async (req, res) => {
@@ -488,6 +574,12 @@ router.post('/locations', async (req, res) => {
             if (activateTripResult.rowCount > 0) {
                 startedNow = true;
                 nextTripStatus = activateTripResult.rows[0].status;
+
+                // Fire-and-forget: enrich all segments for this trip with real-time
+                // traffic + weather data now that the trip is actually starting.
+                enrichTripSegments(tripId).catch((err) =>
+                    console.error(`[Enrichment] Failed for trip ${tripId}:`, err.message)
+                );
             }
         }
 
@@ -721,41 +813,23 @@ router.post('/create-trip', async (req, res) => {
                 const currentRouteId = routeRes.rows[0].id;
                 routeMapping[routeIndex] = currentRouteId;
 
-                // Intelligence layer: segment + traffic enrichment
+                // Segment geometry: stored at creation time (no API calls here)
+                // Traffic + weather enrichment happens when the trip goes active.
                 if (r.polyline) {
                     const decodedPoints = decodePolyline(r.polyline);
                     const targetSegmentKm = Math.max(8, Math.min(20, (r.distanceMeters / 1000) / 10));
                     const segments = segmentRoute(decodedPoints, targetSegmentKm);
 
                     if (segments.length > 0) {
-                        // Baseline: totalRouteDuration / numSegments (no per-segment API assumption)
-                        const avgSegmentTime = r.durationSeconds / segments.length;
-
-                        // Batch fetch real-time traffic durations — one API call for all segment pairs
-                        let trafficDurations = new Array(segments.length).fill(null);
-                        try {
-                            trafficDurations = await fetchSegmentTrafficDurations(segments);
-                        } catch (trafficErr) {
-                            // Traffic enrichment is best-effort: don't fail trip creation
-                            console.warn(`Traffic enrichment failed for route ${currentRouteId}:`, trafficErr.message);
-                        }
-
-                        const trafficCheckedAt = new Date().toISOString();
-
-                        // Bulk insert all segments in a single multi-row VALUES query
+                        // Bulk insert geometry-only segments (traffic/weather filled later on activation)
                         const valuePlaceholders = [];
                         const valueParams = [];
                         let pIdx = 1;
 
                         for (let sIdx = 0; sIdx < segments.length; sIdx++) {
                             const seg = segments[sIdx];
-                            const durationInTraffic = trafficDurations[sIdx]; // null if unavailable
-                            const delayRatio = (durationInTraffic !== null && avgSegmentTime > 0)
-                                ? parseFloat((durationInTraffic / avgSegmentTime).toFixed(3))
-                                : null;
-
                             valuePlaceholders.push(
-                                `($${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++})`
+                                `($${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++})`
                             );
                             valueParams.push(
                                 currentRouteId,
@@ -765,10 +839,7 @@ router.post('/create-trip', async (req, res) => {
                                 seg.end_lat,
                                 seg.end_lng,
                                 seg.distance,
-                                JSON.stringify(seg.points),
-                                durationInTraffic,
-                                delayRatio,
-                                trafficCheckedAt
+                                JSON.stringify(seg.points)
                             );
                         }
 
@@ -776,8 +847,7 @@ router.post('/create-trip', async (req, res) => {
                             INSERT INTO trip_segments (
                                 route_id, segment_index,
                                 start_lat, start_lng, end_lat, end_lng,
-                                distance_meters, points_json,
-                                duration_in_traffic_seconds, delay_ratio, traffic_checked_at
+                                distance_meters, points_json
                             ) VALUES ${valuePlaceholders.join(', ')}
                         `;
                         await client.query(bulkInsertQuery, valueParams);

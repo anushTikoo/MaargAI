@@ -57,6 +57,29 @@ export async function getTripsForCurrentUser() {
     };
 }
 
+export async function getActiveMapTripsForCurrentUser() {
+    const userId = await resolveCurrentUserId();
+
+    const response = await fetch(`${apiBaseUrl}/api/trips/active-map?fleet_manager_id=${encodeURIComponent(userId)}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+            ...getAuthHeaders(),
+        },
+    });
+
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok) {
+        throw new Error(data?.error || 'Unable to load active trips map data.');
+    }
+
+    return {
+        trips: Array.isArray(data?.trips) ? data.trips : [],
+        source: 'database',
+    };
+}
+
 export async function createTripForCurrentUser({ truckId, source, destination, sourceLat, sourceLng, destLat, destLng, deadlineTimestamp }) {
     const userId = await resolveCurrentUserId();
 

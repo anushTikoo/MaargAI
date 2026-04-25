@@ -39,7 +39,7 @@ export async function getRoutes(sourceLat, sourceLng, destLat, destLng) {
         extraComputations: ['TOLLS'],
         routeModifiers: {
             vehicleInfo: {
-                emissionType: 'GASOLINE'
+                emissionType: 'DIESEL'
             }
         }
     };
@@ -95,6 +95,14 @@ export async function getRoutes(sourceLat, sourceLng, destLat, destLng) {
 
             // Toll information extraction from travelAdvisory
             const tollInfo = route.travelAdvisory?.tollInfo || null;
+            let tollCost = 0;
+            if (tollInfo?.estimatedPrice && tollInfo.estimatedPrice.length > 0) {
+                // Taking the first estimated price (standard for single currency responses)
+                const price = tollInfo.estimatedPrice[0];
+                const units = parseInt(price.units || "0", 10);
+                const nanos = (price.nanos || 0) / 1000000000;
+                tollCost = units + nanos;
+            }
 
             return {
                 polyline: route.polyline?.encodedPolyline || "",
@@ -102,6 +110,7 @@ export async function getRoutes(sourceLat, sourceLng, destLat, destLng) {
                 durationSeconds: durationSeconds,
                 routeLabels: routeLabels,
                 tollInfo: tollInfo,
+                tollCost: tollCost,
                 hasTolls: !!tollInfo || routeLabels.some(label => label.toLowerCase().includes("toll"))
             };
         });

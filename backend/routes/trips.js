@@ -53,7 +53,8 @@ router.get('/', async (req, res) => {
                 r.route_index AS current_route_index,
                 r.distance_meters AS current_route_distance_meters,
                 r.duration_seconds AS current_route_duration_seconds,
-                r.has_tolls AS current_route_has_tolls
+                r.has_tolls AS current_route_has_tolls,
+                r.toll_cost AS current_route_toll_cost
             FROM trips t
             JOIN trucks tr ON tr.id = t.truck_id
             LEFT JOIN routes r ON r.id = t.current_route_id
@@ -107,7 +108,8 @@ router.get('/active-map', async (req, res) => {
                 COALESCE(current_route.polyline, fallback_route.polyline) AS polyline,
                 COALESCE(current_route.distance_meters, fallback_route.distance_meters) AS distance_meters,
                 COALESCE(current_route.duration_seconds, fallback_route.duration_seconds) AS duration_seconds,
-                COALESCE(current_route.has_tolls, fallback_route.has_tolls) AS has_tolls
+                COALESCE(current_route.has_tolls, fallback_route.has_tolls) AS has_tolls,
+                COALESCE(current_route.toll_cost, fallback_route.toll_cost) AS toll_cost
             FROM trips t
             JOIN trucks tr ON tr.id = t.truck_id
             LEFT JOIN routes current_route ON current_route.id = t.current_route_id
@@ -149,6 +151,7 @@ router.get('/active-map', async (req, res) => {
                     distance_meters: activeTrip.distance_meters,
                     duration_seconds: activeTrip.duration_seconds,
                     has_tolls: activeTrip.has_tolls,
+                    toll_cost: activeTrip.toll_cost,
                 }
                 : null,
         }));
@@ -215,9 +218,12 @@ router.get('/:id/intelligence', async (req, res) => {
             return res.status(400).json({ error: 'Invalid trip ID.' });
         }
 
-        // 1. Verify trip exists and get the currently assigned route
+        // 1. Verify trip exists and get current route + truck mileage
         const tripRes = await pool.query(
-            'SELECT id, current_route_id FROM trips WHERE id = $1',
+            `SELECT t.id, t.current_route_id, tr.mileage_kmpl
+             FROM trips t
+             JOIN trucks tr ON tr.id = t.truck_id
+             WHERE t.id = $1`,
             [tripId]
         );
 
@@ -226,10 +232,12 @@ router.get('/:id/intelligence', async (req, res) => {
         }
 
         const currentRouteId = tripRes.rows[0].current_route_id;
+        const truckMileage = parseFloat(tripRes.rows[0].mileage_kmpl) || 4.0; // Default to 4 kmpl if not set
+        const FUEL_PRICE_PER_LITRE = 90;
 
         // 2. Fetch ALL routes for this trip, ordered by route_index (A, B, C...)
         const routesRes = await pool.query(
-            `SELECT id, route_index, distance_meters, duration_seconds, has_tolls
+            `SELECT id, route_index, distance_meters, duration_seconds, has_tolls, toll_cost
              FROM routes
              WHERE trip_id = $1
              ORDER BY route_index ASC`,
@@ -311,11 +319,11 @@ router.get('/:id/intelligence', async (req, res) => {
                 const hasWeather = metrics.avg_weather !== null;
 
                 if (hasTraffic || hasWeather) {
-                    const excessAvg  = hasTraffic ? Math.max(0, metrics.avg_delay - 1)  : 0;
-                    const excessMax  = hasTraffic ? Math.max(0, metrics.max_delay - 1)  : 0;
-                    const density    = hasTraffic ? metrics.congestion_density           : 0;
-                    const avgWeather = hasWeather ? metrics.avg_weather                  : 0;
-                    const maxWeather = hasWeather ? metrics.max_weather                  : 0;
+                    const excessAvg = hasTraffic ? Math.max(0, metrics.avg_delay - 1) : 0;
+                    const excessMax = hasTraffic ? Math.max(0, metrics.max_delay - 1) : 0;
+                    const density = hasTraffic ? metrics.congestion_density : 0;
+                    const avgWeather = hasWeather ? metrics.avg_weather : 0;
+                    const maxWeather = hasWeather ? metrics.max_weather : 0;
 
                     const trafficRisk = (excessAvg * 0.40) + (excessMax * 0.30) + (density * 0.20);
                     const weatherRisk = (avgWeather * 0.10) + (maxWeather * 0.30);
@@ -338,6 +346,8 @@ router.get('/:id/intelligence', async (req, res) => {
                     distance_meters: route.distance_meters,
                     duration_seconds: route.duration_seconds,
                     has_tolls: route.has_tolls,
+                    toll_cost: parseFloat(route.toll_cost || 0),
+                    fuel_cost: parseFloat(fuelCost.toFixed(2)),
                     is_current: route.id === currentRouteId,
                     metrics,
                     segments
@@ -470,7 +480,7 @@ router.get('/:trip_id/routes', async (req, res) => {
         }
 
         const routesResult = await pool.query(
-            `SELECT id, trip_id, route_index, polyline, distance_meters, duration_seconds, has_tolls, created_at
+            `SELECT id, trip_id, route_index, polyline, distance_meters, duration_seconds, has_tolls, toll_cost, created_at
              FROM routes
              WHERE trip_id = $1
              ORDER BY route_index ASC`,
@@ -827,8 +837,8 @@ router.post('/create-trip', async (req, res) => {
 
                 const insertRouteQuery = `
                     INSERT INTO routes (
-                        trip_id, route_index, polyline, distance_meters, duration_seconds, has_tolls
-                    ) VALUES ($1, $2, $3, $4, $5, $6)
+                        trip_id, route_index, polyline, distance_meters, duration_seconds, has_tolls, toll_cost
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
                     RETURNING id;
                 `;
 
@@ -838,7 +848,8 @@ router.post('/create-trip', async (req, res) => {
                     r.polyline,
                     r.distanceMeters,
                     r.durationSeconds,
-                    r.hasTolls
+                    r.hasTolls,
+                    r.tollCost
                 ]);
 
                 // Store mapping: index -> route_id

@@ -81,6 +81,7 @@ CREATE TABLE routes (
     distance_meters INT,
     duration_seconds INT,
     has_tolls BOOLEAN DEFAULT FALSE,
+    toll_cost NUMERIC(10, 2) DEFAULT 0.00,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

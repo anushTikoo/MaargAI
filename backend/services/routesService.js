@@ -34,8 +34,14 @@ export async function getRoutes(sourceLat, sourceLng, destLat, destLng) {
             }
         },
         travelMode: 'DRIVE',
-        routingPreference: 'TRAFFIC_AWARE_OPTIMAL',
-        computeAlternativeRoutes: true // Important: fetching alternative routes
+        routingPreference: 'TRAFFIC_AWARE',
+        computeAlternativeRoutes: true, // Important: fetching alternative routes
+        extraComputations: ['TOLLS'],
+        routeModifiers: {
+            vehicleInfo: {
+                emissionType: 'GASOLINE'
+            }
+        }
     };
 
     try {
@@ -46,7 +52,7 @@ export async function getRoutes(sourceLat, sourceLng, destLat, destLng) {
                 'Content-Type': 'application/json',
                 'X-Goog-Api-Key': apiKey,
                 // FieldMask allows us to limit response size and specify extraction targets exactly
-                'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline,routes.routeLabels'
+                'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline,routes.routeLabels,routes.travelAdvisory.tollInfo'
             },
             body: JSON.stringify(requestBody)
         });
@@ -87,12 +93,16 @@ export async function getRoutes(sourceLat, sourceLng, destLat, destLng) {
             const durationRaw = route.duration || "0s";
             const durationSeconds = parseInt(durationRaw.replace('s', ''), 10);
 
+            // Toll information extraction from travelAdvisory
+            const tollInfo = route.travelAdvisory?.tollInfo || null;
+
             return {
                 polyline: route.polyline?.encodedPolyline || "",
                 distanceMeters: route.distanceMeters || 0,
                 durationSeconds: durationSeconds,
                 routeLabels: routeLabels,
-                hasTolls: routeLabels.some(label => label.toLowerCase().includes("toll")) // Best effort parsing standard Google labels
+                tollInfo: tollInfo,
+                hasTolls: !!tollInfo || routeLabels.some(label => label.toLowerCase().includes("toll"))
             };
         });
 

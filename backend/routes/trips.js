@@ -243,6 +243,29 @@ router.get('/:trip_id/locations', async (req, res) => {
     }
 });
 
+// GET /api/trips/test-routes?source_lat=...&source_lng=...&dest_lat=...&dest_lng=...
+router.get('/test-routes', async (req, res) => {
+    try {
+        const { source_lat, source_lng, dest_lat, dest_lng } = req.query;
+
+        if (!source_lat || !source_lng || !dest_lat || !dest_lng) {
+            return res.status(400).json({ error: 'source_lat, source_lng, dest_lat, and dest_lng are required.' });
+        }
+
+        const routes = await getRoutes(
+            parseFloat(source_lat),
+            parseFloat(source_lng),
+            parseFloat(dest_lat),
+            parseFloat(dest_lng)
+        );
+
+        return res.status(200).json({ routes });
+    } catch (error) {
+        console.error('Error in test-routes:', error);
+        return res.status(error.statusCode || 500).json({ error: error.message || 'Internal server error.' });
+    }
+});
+
 // POST /api/trips/create-trip
 router.post('/create-trip', async (req, res) => {
     try {

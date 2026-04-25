@@ -124,6 +124,8 @@ CREATE TABLE trip_segments (
     duration_in_traffic_seconds INT,
     delay_ratio NUMERIC(6,3),
     traffic_checked_at TIMESTAMP,
+    weather_score NUMERIC(4,3),
+    weather_main VARCHAR(50),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

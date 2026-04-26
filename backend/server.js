@@ -7,6 +7,8 @@ import trucksRoutes from './routes/trucks.js';
 import tripsRoutes from './routes/trips.js';
 import fleetUploadRoutes from './routes/fleetUpload.js';
 import weatherRoutes from './routes/weather.js';
+import workerRoutes from './routes/worker.js';
+import simulationRoutes from './routes/simulation.js';
 
 
 dotenv.config();
@@ -26,6 +28,8 @@ app.use('/api/trucks', trucksRoutes);
 app.use('/api/trips', tripsRoutes);
 app.use('/api/fleet', fleetUploadRoutes);
 app.use('/api/weather', weatherRoutes);
+app.use('/api/worker', workerRoutes);
+app.use('/api/simulation', simulationRoutes);
 
 
 // Basic health check

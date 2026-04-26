@@ -59,7 +59,10 @@ router.get('/', async (req, res) => {
                 r.is_ai_recommended AS current_route_is_ai_recommended,
                 r.ai_total_cost_inr AS current_route_ai_total_cost_inr,
                 r.ai_slack_time_hours AS current_route_ai_slack_time_hours,
-                r.ai_risk_level AS current_route_ai_risk_level
+                r.ai_risk_level AS current_route_ai_risk_level,
+                t.live_eta_seconds,
+                t.live_distance_meters,
+                t.live_slack_time_hours
             FROM trips t
             JOIN trucks tr ON tr.id = t.truck_id
             LEFT JOIN routes r ON r.id = t.current_route_id
@@ -108,6 +111,8 @@ router.get('/active-map', async (req, res) => {
                 t.dest_lat,
                 t.dest_lng,
                 t.created_at,
+                t.ai_decision,
+                t.ai_reroute_reason,
                 COALESCE(current_route.id, fallback_route.id) AS route_id,
                 COALESCE(current_route.route_index, fallback_route.route_index) AS route_index,
                 COALESCE(current_route.polyline, fallback_route.polyline) AS polyline,
@@ -152,6 +157,8 @@ router.get('/active-map', async (req, res) => {
             dest_lat: activeTrip.dest_lat,
             dest_lng: activeTrip.dest_lng,
             created_at: activeTrip.created_at,
+            ai_decision: activeTrip.ai_decision,
+            ai_reroute_reason: activeTrip.ai_reroute_reason,
             route: activeTrip.route_id
                 ? {
                     id: activeTrip.route_id,
@@ -174,6 +181,7 @@ router.get('/active-map', async (req, res) => {
         const tripsWithLiveLocations = await Promise.all(
             trips.map(async (trip) => {
                 try {
+                    // Fetch Firebase live location
                     const locationSnapshot = await realtimeDB
                         .ref(`fleet_managers/${trip.fleet_manager_id}/${trip.id}`)
                         .once('value');
@@ -181,6 +189,14 @@ router.get('/active-map', async (req, res) => {
                     const location = locationSnapshot.val();
                     const lat = Number(location?.lat);
                     const lng = Number(location?.lng);
+
+                    // Fetch recent history from Postgres for breadcrumbs
+                    const historyRes = await pool.query(
+                        `SELECT lat, lng, timestamp FROM trip_locations 
+                         WHERE trip_id = $1 
+                         ORDER BY timestamp DESC LIMIT 50`,
+                        [trip.id]
+                    );
 
                     const isValidLiveLocation =
                         Number.isFinite(lat) &&
@@ -201,9 +217,10 @@ router.get('/active-map', async (req, res) => {
                             lng,
                             timestamp: Number(location?.timestamp) || null,
                         },
+                        history: historyRes.rows.reverse()
                     };
                 } catch (firebaseError) {
-                    console.error(`Error fetching live location for trip ${trip.id}:`, firebaseError);
+                    console.error(`Error fetching data for trip ${trip.id}:`, firebaseError);
                     return null;
                 }
             })
@@ -580,23 +597,25 @@ async function enrichTripSegments(tripId) {
         const recommendation = await getAIRouteRecommendation(geminiPayload);
         const selectedIndex  = recommendation.selected_route;
 
-        // Reset all flags then set the winner
-        await pool.query('UPDATE routes SET is_ai_recommended = FALSE WHERE trip_id = $1', [tripId]);
-        await pool.query(
-            `UPDATE routes 
-             SET is_ai_recommended = TRUE,
-                 ai_total_cost_inr = $3,
-                 ai_slack_time_hours = $4,
-                 ai_risk_level = $5
-             WHERE trip_id = $1 AND route_index = $2`,
-            [
-                tripId, 
-                selectedIndex,
-                recommendation.summary?.total_cost_inr || null,
-                recommendation.summary?.slack_time_hours || null,
-                recommendation.summary?.risk_level || null
-            ]
-        );
+        // Update ALL routes with their respective AI stats
+        for (const routeData of geminiPayload) {
+            await pool.query(
+                `UPDATE routes 
+                 SET ai_total_cost_inr = $1,
+                     ai_slack_time_hours = $2,
+                     ai_risk_level = $3,
+                     is_ai_recommended = $4
+                 WHERE trip_id = $5 AND route_index = $6`,
+                [
+                    routeData.fuel_cost_inr + (routeData.toll_cost_inr || 0),
+                    routeData.slack_time_hours,
+                    routeData.reliability_score < 0.3 ? 'low' : routeData.reliability_score < 0.7 ? 'medium' : 'high',
+                    routeData.id === selectedIndex,
+                    tripId,
+                    routeData.id
+                ]
+            );
+        }
 
         // Also update current_route_id on the trip so the map shows the right one
         const winnerRes = await pool.query(
@@ -604,9 +623,17 @@ async function enrichTripSegments(tripId) {
             [tripId, selectedIndex]
         );
         if (winnerRes.rowCount > 0) {
+            const fullReasoning = Array.isArray(recommendation.reasoning) 
+                ? recommendation.reasoning.join('\n\n') 
+                : (recommendation.reasoning || 'Initial route selected by AI.');
+
             await pool.query(
-                'UPDATE trips SET current_route_id = $1 WHERE id = $2',
-                [winnerRes.rows[0].id, tripId]
+                `UPDATE trips 
+                 SET current_route_id = $1, 
+                     ai_decision = 'stay_course', 
+                     ai_reroute_reason = $2 
+                 WHERE id = $3`,
+                [winnerRes.rows[0].id, fullReasoning, tripId]
             );
         }
 
@@ -738,11 +765,12 @@ router.post('/locations', async (req, res) => {
         const truckId = truckResult.rows[0].id;
 
         const tripResult = await pool.query(
-            `SELECT id, fleet_manager_id, status, source_lat, source_lng
-             FROM trips
-             WHERE truck_id = $1
-               AND status IN ('not started', 'active')
-             ORDER BY created_at DESC
+            `SELECT t.id, t.fleet_manager_id, t.status, t.source_lat, t.source_lng, t.ai_reroute_reason, r.is_ai_recommended
+             FROM trips t
+             LEFT JOIN routes r ON t.current_route_id = r.id
+             WHERE t.truck_id = $1
+               AND t.status IN ('not started', 'active')
+             ORDER BY t.created_at DESC
              LIMIT 1`,
             [truckId]
         );
@@ -797,6 +825,12 @@ router.post('/locations', async (req, res) => {
             [tripId, parsedLat, parsedLng]
         );
 
+        // Fix: Update the main trips table so the worker loop has the latest GPS
+        await pool.query(
+            `UPDATE trips SET last_gps_lat = $1, last_gps_lng = $2 WHERE id = $3`,
+            [parsedLat, parsedLng, tripId]
+        );
+
         const shouldSyncLiveLocation = nextTripStatus === 'active';
 
         // push to firebase (LIVE) only for active trips
@@ -823,6 +857,11 @@ router.post('/locations', async (req, res) => {
                     : null,
                 start_radius_meters: START_TRIP_RADIUS_METERS,
                 live_location_synced: shouldSyncLiveLocation,
+                ai_recommendation: {
+                    has_recommendation: !!tripResult.rows[0].ai_reroute_reason,
+                    reasoning: tripResult.rows[0].ai_reroute_reason || null,
+                    is_ai_optimized: !!tripResult.rows[0].is_ai_recommended
+                }
             },
         });
     } catch (error) {

@@ -9,6 +9,7 @@ import fleetUploadRoutes from './routes/fleetUpload.js';
 import weatherRoutes from './routes/weather.js';
 import workerRoutes from './routes/worker.js';
 import simulationRoutes from './routes/simulation.js';
+import { processActiveTrips } from './services/monitoringService.js';
 
 
 dotenv.config();
@@ -39,4 +40,17 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+
+  // HACKATHON AUTOMATION: Run the monitoring loop every 2 minutes
+  // This replaces the need for an external Cloud Scheduler.
+  const MONITORING_INTERVAL_MS = 2 * 60 * 1000;
+  setInterval(async () => {
+    console.log('[Internal Worker] Starting background monitoring check...');
+    try {
+      const stats = await processActiveTrips();
+      console.log(`[Internal Worker] Check complete. Processed ${stats.tripsProcessed} trips.`);
+    } catch (err) {
+      console.error('[Internal Worker] Error in background monitoring:', err.message);
+    }
+  }, MONITORING_INTERVAL_MS);
 });

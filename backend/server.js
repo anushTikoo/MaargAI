@@ -38,18 +38,45 @@ app.get('/', (req, res) => {
   res.send('Server is running');
 });
 
+let lastWorkerStats = {
+  lastRun: null,
+  duration: null,
+  tripsProcessed: 0,
+  error: null,
+  status: 'initialized'
+};
+
+app.get('/api/worker/status', (req, res) => {
+  res.json({
+    worker_name: 'MaargAI Internal Monitoring Loop',
+    interval: '2 minutes',
+    ...lastWorkerStats
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 
   // HACKATHON AUTOMATION: Run the monitoring loop every 2 minutes
-  // This replaces the need for an external Cloud Scheduler.
   const MONITORING_INTERVAL_MS = 2 * 60 * 1000;
   setInterval(async () => {
     console.log('[Internal Worker] Starting background monitoring check...');
+    const start = Date.now();
     try {
+      lastWorkerStats.status = 'running';
       const stats = await processActiveTrips();
-      console.log(`[Internal Worker] Check complete. Processed ${stats.tripsProcessed} trips.`);
+      lastWorkerStats = {
+        lastRun: new Date().toISOString(),
+        duration: `${(Date.now() - start) / 1000}s`,
+        tripsProcessed: stats.processed || 0,
+        error: null,
+        status: 'idle'
+      };
+      console.log(`[Internal Worker] Check complete. Processed ${lastWorkerStats.tripsProcessed} trips.`);
     } catch (err) {
+      lastWorkerStats.lastRun = new Date().toISOString();
+      lastWorkerStats.error = err.message;
+      lastWorkerStats.status = 'error';
       console.error('[Internal Worker] Error in background monitoring:', err.message);
     }
   }, MONITORING_INTERVAL_MS);

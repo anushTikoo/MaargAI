@@ -24,11 +24,6 @@ export default function Home() {
                         </span>
                         <span className="font-['Inter'] tracking-tight headline-sm font-bold">MaargAI</span>
                     </Link>
-                    <div className="flex items-center gap-4">
-                        <button className="cursor-pointer p-2 hover:bg-surface-container-low rounded-md transition-all scale-95 active:scale-90 duration-200 border-none bg-transparent">
-                            <span className="material-symbols-outlined text-secondary">notifications</span>
-                        </button>
-                    </div>
                 </div>
             </header>
 

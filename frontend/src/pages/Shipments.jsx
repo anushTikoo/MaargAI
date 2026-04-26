@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getTrucksForCurrentUser } from '../services/trucksService';
 import { createTripForCurrentUser, deleteTripForCurrentUser, getTripsForCurrentUser } from '../services/tripsService';
+import { injectDelay, resetSimulation } from '../services/simulationService';
 
 const PLACES_SEARCH_DEBOUNCE_MS = 1000;
 const GOOGLE_PLACES_API_KEY = import.meta.env.VITE_GOOGLE_PLACES_API_KEY;
@@ -202,14 +203,16 @@ export default function Shipments() {
     const [trips, setTrips] = useState([]);
     const [isLoadingTrips, setIsLoadingTrips] = useState(true);
     const [tripsError, setTripsError] = useState('');
-
+    const [simulatingTripId, setSimulatingTripId] = useState(null);
     const [formError, setFormError] = useState('');
     const [formSuccess, setFormSuccess] = useState('');
+
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [deletingTripId, setDeletingTripId] = useState(null);
     // Delete modal state
     const [deleteModalOpen, setDeleteModalOpen] = useState(false);
     const [tripToDelete, setTripToDelete] = useState(null);
+    const [expandedReasoningTripIds, setExpandedReasoningTripIds] = useState(new Set());
 
     const sourceSearchTimeoutRef = useRef(null);
     const destinationSearchTimeoutRef = useRef(null);
@@ -479,6 +482,30 @@ export default function Shipments() {
         }
     };
 
+    const handleInjectDelay = async (tripId, minutes) => {
+        try {
+            setSimulatingTripId(tripId);
+            await injectDelay(tripId, minutes);
+            // Give the backend Agent time to execute ReAct loop before refreshing
+            setTimeout(() => refreshTrips(), 6000); 
+        } catch (error) {
+            setTripsError(error?.message || 'Unable to inject delay.');
+            setSimulatingTripId(null);
+        }
+    };
+
+    const handleResetSimulation = async (tripId) => {
+        try {
+            setSimulatingTripId(tripId);
+            await resetSimulation(tripId);
+            await refreshTrips();
+        } catch (error) {
+            setTripsError(error?.message || 'Unable to reset simulation.');
+        } finally {
+            setSimulatingTripId(null);
+        }
+    };
+
     const handleAddShipment = async () => {
         setFormError('');
         setFormSuccess('');
@@ -626,11 +653,11 @@ export default function Shipments() {
                                                         <span className="material-symbols-outlined text-[1rem]">
                                                             {trip.status === 'completed' 
                                                                 ? 'check_circle' 
-                                                                : trip.status === 'active' && !trip.current_route_is_ai_recommended 
+                                                                : trip.status === 'active' && !trip.ai_decision 
                                                                     ? 'psychology' 
                                                                     : 'schedule'}
                                                         </span>
-                                                        {trip.status === 'active' && !trip.current_route_is_ai_recommended ? 'Analyzing' : (trip.status || 'active')}
+                                                        {trip.status === 'active' && !trip.ai_decision ? 'Analyzing' : (trip.status || 'active')}
                                                     </span>
                                                 </div>
                                                 <p className="text-sm text-secondary">
@@ -640,7 +667,7 @@ export default function Shipments() {
 
                                             {trip.status !== 'not started' && (
                                                 <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low px-4 py-3 min-w-44 flex flex-col justify-center">
-                                                    {trip.status === 'active' && !trip.current_route_is_ai_recommended ? (
+                                                    {trip.status === 'active' && !trip.ai_decision ? (
                                                         <div className="flex flex-col items-center justify-center text-center">
                                                             <div className="flex items-center gap-2 text-primary font-bold animate-pulse mb-1">
                                                                 <span className="material-symbols-outlined text-[1.2rem] animate-spin" style={{ animationDuration: '3s' }}>data_usage</span>
@@ -656,7 +683,7 @@ export default function Shipments() {
                                                             <div className="flex items-end gap-2">
                                                                 <span className="material-symbols-outlined text-primary text-[1.15rem]">timer</span>
                                                                 <span className="text-2xl font-black text-on-surface leading-none">
-                                                                    {formatEtaSeconds(trip.current_route_duration_seconds || trip.baseline_eta_seconds).replace(/ \d+s$/, '').replace(/^\d+s$/, '< 1m')}
+                                                                    {formatEtaSeconds(trip.live_eta_seconds || trip.current_route_duration_seconds || trip.baseline_eta_seconds).replace(/ \d+s$/, '').replace(/^\d+s$/, '< 1m')}
                                                                 </span>
                                                             </div>
                                                         </>
@@ -697,7 +724,7 @@ export default function Shipments() {
                                                     <>
                                                         <span className="inline-flex items-center gap-2 rounded-full bg-surface-container-low px-3 py-1 text-xs font-semibold text-secondary border border-outline-variant/20">
                                                             <span className="material-symbols-outlined text-[0.95rem]">straighten</span>
-                                                            Distance: {formatDistanceMeters(trip.current_route_distance_meters)}
+                                                            Distance: {formatDistanceMeters(trip.live_distance_meters || trip.current_route_distance_meters || trip.baseline_distance_meters)}
                                                         </span>
                                                         <span className="inline-flex items-center gap-2 rounded-full bg-surface-container-low px-3 py-1 text-xs font-semibold text-secondary border border-outline-variant/20">
                                                             <span className="material-symbols-outlined text-[0.95rem]">toll</span>
@@ -709,7 +736,10 @@ export default function Shipments() {
                                                         </span>
                                                         {trip.current_route_ai_slack_time_hours !== null && (
                                                             <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold border ${
-                                                                Number(trip.current_route_ai_slack_time_hours) < 0 
+                                                                Number((trip.live_slack_time_hours !== null && trip.live_slack_time_hours !== undefined) 
+                                                                    ? trip.live_slack_time_hours 
+                                                                    : (trip.current_route_ai_slack_time_hours || 0)
+                                                                ) < 0 
                                                                     ? 'bg-red-50 text-red-700 border-red-200' 
                                                                     : Number(trip.current_route_ai_slack_time_hours) < 0.5 
                                                                         ? 'bg-amber-50 text-amber-700 border-amber-200'
@@ -753,6 +783,87 @@ export default function Shipments() {
                                                 {deletingTripId === trip.id ? 'Deleting...' : 'Delete'}
                                             </button>
                                         </div>
+
+                                        {/* AI Insight & Simulation Controller */}
+                                        {trip.status === 'active' && (
+                                            <div className="mt-4 pt-4 border-t border-outline-variant/10 flex flex-col gap-3">
+                                                {trip.ai_reroute_reason && (
+                                                    <div className="mt-4 p-4 bg-primary/5 rounded-lg border border-primary/20">
+                                                        <div className="flex items-center justify-between mb-2">
+                                                            <div className="flex items-center gap-2 text-primary font-bold">
+                                                                <span className="material-symbols-outlined text-[1.1rem]">psychology</span>
+                                                                Agent Insight
+                                                            </div>
+                                                            {trip.ai_decision === 'reroute' ? (
+                                                                <span className="bg-amber-100 text-amber-800 text-[10px] font-black uppercase px-2 py-0.5 rounded border border-amber-200">
+                                                                    🔄 Reroute Advised
+                                                                </span>
+                                                            ) : (
+                                                                <span className="bg-green-100 text-green-800 text-[10px] font-black uppercase px-2 py-0.5 rounded border border-green-200">
+                                                                    ✅ Stay the Course
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div className="text-sm text-secondary leading-relaxed whitespace-pre-wrap">
+                                                            {expandedReasoningTripIds.has(trip.id) 
+                                                                ? trip.ai_reroute_reason 
+                                                                : (trip.ai_reroute_reason.length > 150 
+                                                                    ? trip.ai_reroute_reason.substring(0, 150) + '...' 
+                                                                    : trip.ai_reroute_reason)
+                                                            }
+                                                            {trip.ai_reroute_reason.length > 150 && (
+                                                                <button
+                                                                    onClick={() => {
+                                                                        const next = new Set(expandedReasoningTripIds);
+                                                                        if (next.has(trip.id)) next.delete(trip.id);
+                                                                        else next.add(trip.id);
+                                                                        setExpandedReasoningTripIds(next);
+                                                                    }}
+                                                                    className="ml-2 text-primary font-bold hover:underline inline-flex items-center gap-1"
+                                                                >
+                                                                    {expandedReasoningTripIds.has(trip.id) ? 'Show Less' : 'Show More'}
+                                                                    <span className="material-symbols-outlined text-[1rem]">
+                                                                        {expandedReasoningTripIds.has(trip.id) ? 'expand_less' : 'expand_more'}
+                                                                    </span>
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                
+                                                <div className="flex flex-wrap items-center gap-3">
+                                                    <span className="text-xs font-bold text-secondary uppercase tracking-wider">Demo Control:</span>
+                                                    
+                                                    {trip.simulated_delay_seconds > 0 && (
+                                                        <span className="inline-flex items-center gap-1.5 rounded-md bg-red-100 px-2 py-1 text-xs font-bold text-red-700 animate-pulse border border-red-200">
+                                                            <span className="material-symbols-outlined text-[1rem]">warning</span>
+                                                            +{formatEtaSeconds(trip.simulated_delay_seconds)} Simulated Delay
+                                                        </span>
+                                                    )}
+
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleInjectDelay(trip.id, 20)}
+                                                        disabled={simulatingTripId === trip.id}
+                                                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-amber-100 px-3 py-1.5 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-200 disabled:opacity-50"
+                                                    >
+                                                        <span className="material-symbols-outlined text-[1.1rem]">
+                                                            {simulatingTripId === trip.id ? 'hourglass_top' : 'traffic'}
+                                                        </span>
+                                                        Inject Traffic & Warp Location
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleResetSimulation(trip.id)}
+                                                        disabled={simulatingTripId === trip.id}
+                                                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-surface-container-low border border-outline-variant/20 px-3 py-1.5 text-xs font-bold text-secondary transition-colors hover:bg-surface-container hover:text-on-surface disabled:opacity-50"
+                                                    >
+                                                        <span className="material-symbols-outlined text-[1.1rem]">refresh</span>
+                                                        Reset
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 </article>
                             ))}

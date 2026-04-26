@@ -849,16 +849,24 @@ router.post('/locations', async (req, res) => {
             const polyline = tripResult.rows[0].polyline;
             if (polyline) {
                 const points = decodePolyline(polyline);
-                if (points.length > 5) {
-                    // Pick 3 evenly spaced waypoints to force the route shape in Google Maps
-                    const step = Math.floor(points.length / 4);
-                    const wps = [points[step], points[step * 2], points[step * 3]];
-                    waypointsStr = '&waypoints=' + wps.map(p => `${p.lat},${p.lng}`).join('%7C'); // %7C is URL encoded pipe '|'
+                if (points.length > 10) {
+                    // Pick 6 evenly spaced waypoints to force the route shape in Google Maps tightly
+                    const waypointsCount = 6;
+                    const step = Math.floor(points.length / (waypointsCount + 1));
+                    const wps = [];
+                    for (let i = 1; i <= waypointsCount; i++) {
+                        if (points[step * i]) wps.push(points[step * i]);
+                    }
+                    
+                    if (wps.length > 0) {
+                        waypointsStr = '&waypoints=' + wps.map(p => `${p.lat},${p.lng}`).join('%7C'); // %7C is URL encoded pipe '|'
+                    }
                 }
             }
 
             // Either the initial route was just assigned, or the AI rerouted.
-            googleMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${parsedLat},${parsedLng}&destination=${destLat},${destLng}${waypointsStr}`;
+            // Added travelmode=driving to ensure the phone app uses truck-friendly logic and matches backend ETA.
+            googleMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${parsedLat},${parsedLng}&destination=${destLat},${destLng}${waypointsStr}&travelmode=driving`;
             
             await pool.query(
                 `UPDATE trips SET last_notified_route_id = $1 WHERE id = $2`,

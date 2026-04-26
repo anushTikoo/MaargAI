@@ -163,11 +163,15 @@ async function processSingleTrip(trip) {
                     }
 
                     // Update the trip with the new reasoning, decision, and the new route
+                    // We immediately set live_eta_seconds to the new route's duration so the frontend updates instantly.
                     await pool.query(`
                         UPDATE trips 
-                        SET ai_reroute_reason = $1, current_route_id = $2, ai_decision = $3, live_eta_seconds = NULL
-                        WHERE id = $4
-                    `, [decision.reasoning, newRouteDbId, decision.action, trip.id]);
+                        SET ai_reroute_reason = $1, 
+                            current_route_id = $2, 
+                            ai_decision = $3, 
+                            live_eta_seconds = $4
+                        WHERE id = $5
+                    `, [decision.reasoning, newRouteDbId, decision.action, cachedRoute.duration, trip.id]);
                 } else {
                     console.log(`[Worker] 🛣️ AGENT DECISION: Stay the course.`);
                     await pool.query(`

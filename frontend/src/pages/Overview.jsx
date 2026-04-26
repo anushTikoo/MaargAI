@@ -162,6 +162,10 @@ function clearTripLayer(layer) {
     if (layer.routePolyline) {
         layer.routePolyline.setMap(null);
     }
+    
+    if (layer.coveredPolyline) {
+        layer.coveredPolyline.setMap(null);
+    }
 
     if (layer.routeHitArea) {
         layer.routeHitArea.setMap(null);
@@ -408,22 +412,67 @@ export default function Overview() {
                 })
                 : null;
 
-            const routePolyline = routePath.length >= 2
+            // Determine covered and remaining paths
+            let coveredPath = trip.history && trip.history.length > 0 
+                ? trip.history.map(h => ({ lat: Number(h.lat), lng: Number(h.lng) }))
+                : [];
+            
+            let remainingPath = routePath;
+
+            if (routePath.length > 0) {
+                // Find nearest point index in routePath to the truck marker to start the "remaining" path
+                let nearestIndex = 0;
+                let minDistance = Infinity;
+                for (let i = 0; i < routePath.length; i++) {
+                    const d = Math.sqrt(
+                        Math.pow(routePath[i].lat - truckPosition.lat, 2) + 
+                        Math.pow(routePath[i].lng - truckPosition.lng, 2)
+                    );
+                    if (d < minDistance) {
+                        minDistance = d;
+                        nearestIndex = i;
+                    }
+                }
+                
+                // If history is empty, use the start of the polyline as covered
+                if (coveredPath.length === 0 && !trip.route.is_ai_recommended) {
+                    coveredPath = routePath.slice(0, nearestIndex + 1);
+                }
+                
+                remainingPath = routePath.slice(nearestIndex);
+                // Ensure the path starts EXACTLY at the truck's current position for a seamless look
+                remainingPath = [truckPosition, ...remainingPath];
+            }
+
+            const routePolyline = remainingPath.length >= 2
                 ? new window.google.maps.Polyline({
                     map,
-                    path: routePath,
+                    path: remainingPath,
                     geodesic: true,
                     strokeColor: routeColor,
-                    strokeOpacity: 0.9,
-                    strokeWeight: 4,
+                    strokeOpacity: 1.0,
+                    strokeWeight: 6,
                     zIndex: 300,
                 })
                 : null;
 
-            const routeHitArea = routePath.length >= 2
+            const coveredPolyline = coveredPath.length >= 2
                 ? new window.google.maps.Polyline({
                     map,
-                    path: routePath,
+                    path: coveredPath,
+                    geodesic: true,
+                    strokeColor: '#64748b', // Darker grey for better contrast
+                    strokeOpacity: 0.6,
+                    strokeWeight: 4,
+                    strokeDasharray: '6, 6',
+                    zIndex: 299,
+                })
+                : null;
+
+            const routeHitArea = remainingPath.length >= 2
+                ? new window.google.maps.Polyline({
+                    map,
+                    path: remainingPath,
                     geodesic: true,
                     strokeColor: 'transparent',
                     strokeOpacity: 0,
@@ -485,6 +534,7 @@ export default function Overview() {
                 sourceMarker,
                 destinationMarker,
                 routePolyline,
+                coveredPolyline,
                 routeHitArea,
                 truckMarker,
                 routeListeners,

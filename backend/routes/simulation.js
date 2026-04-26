@@ -159,7 +159,9 @@ router.post('/reset', async (req, res) => {
                 last_gps_lng = NULL, 
                 ai_reroute_reason = NULL,
                 ai_decision = NULL,
-                simulated_weather = NULL,
+                live_eta_seconds = NULL,
+                live_distance_meters = NULL,
+                live_slack_time_hours = NULL,
                 current_route_id = $1
             WHERE id = $2
         `, [baselineRouteId, trip_id]);

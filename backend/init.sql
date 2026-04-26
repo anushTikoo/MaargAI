@@ -60,6 +60,15 @@ CREATE TABLE trips (
     baseline_eta_seconds INT,
     baseline_distance_meters INT,
     current_route_id INT,
+    last_gps_lat DOUBLE PRECISION,
+    last_gps_lng DOUBLE PRECISION,
+    simulated_delay_seconds INT DEFAULT 0,
+    last_checked_at TIMESTAMP,
+    ai_reroute_reason TEXT,
+    ai_decision VARCHAR(20),
+    live_eta_seconds INT,
+    live_slack_time_hours NUMERIC(10,2),
+    live_distance_meters INT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT chk_trip_status
@@ -114,6 +123,20 @@ CREATE TABLE trip_locations (
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE
 );
+
+-- Trip Checkpoints (For Monitoring & Trend Analysis)
+CREATE TABLE trip_checkpoints (
+    id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    trip_id INT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    lat DOUBLE PRECISION NOT NULL,
+    lng DOUBLE PRECISION NOT NULL,
+    current_delay_seconds INT NOT NULL,
+    estimated_remaining_seconds INT NOT NULL,
+    risk_score NUMERIC(4,3)
+);
+
+CREATE INDEX idx_checkpoints_trip ON trip_checkpoints(trip_id);
 
 -- Trip Segments (For AI Analysis)
 CREATE TABLE trip_segments (

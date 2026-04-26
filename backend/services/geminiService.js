@@ -1,6 +1,64 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
+import { get_alternative_routes, analyze_route_segments } from './agentTools.js';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+/**
+ * Extracts and parses JSON from a potentially messy string.
+ * @param {string} text 
+ * @returns {Object}
+ */
+function robustParseJSON(text) {
+    if (!text) return {};
+    
+    // 1. Strip markdown fences
+    let clean = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+    // 2. The model might have outputted multiple JSON blocks (hallucinated tool responses + final decision)
+    // We try to find the last valid JSON object that contains the fields we need.
+    const results = [];
+    let braceCount = 0;
+    let start = -1;
+
+    for (let i = 0; i < clean.length; i++) {
+        if (clean[i] === '{') {
+            if (braceCount === 0) start = i;
+            braceCount++;
+        } else if (clean[i] === '}') {
+            braceCount--;
+            if (braceCount === 0 && start !== -1) {
+                const block = clean.substring(start, i + 1);
+                try {
+                    results.push(JSON.parse(block));
+                } catch (e) {
+                    // Ignore invalid sub-blocks
+                }
+            }
+        }
+    }
+
+    if (results.length > 0) {
+        // Return the last one, as it's usually the final decision
+        // Priority: objects with 'action' or 'selected_route'
+        const decision = results.reverse().find(obj => obj.action || obj.selected_route);
+        if (decision) return decision;
+        return results[0]; // Fallback to first valid one if no action found
+    }
+
+    // 3. Last ditch: original logic for single object
+    const firstBrace = clean.indexOf('{');
+    const lastBrace = clean.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1) {
+        try {
+            return JSON.parse(clean.substring(firstBrace, lastBrace + 1));
+        } catch (e) {
+            console.error('[JSON Parser] Critical Failure:', clean);
+            throw e;
+        }
+    }
+
+    throw new Error('No valid JSON object found in response.');
+}
 
 /**
  * Build the structured prompt for Gemini.
@@ -96,13 +154,12 @@ export async function getAIRouteRecommendation(routes) {
         throw new Error('[Gemini] GEMINI_API_KEY is not set in environment variables.');
     }
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const prompt = buildPrompt(routes);
-
-    console.log(`[Gemini] Sending ${routes.length} routes for analysis...`);
-
-    const result = await model.generateContent(prompt);
-    const rawText = result.response.text().trim();
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }]
+    });
+    const rawText = response.text.trim();
 
     console.log('[Gemini] Raw response received.');
 
@@ -111,7 +168,7 @@ export async function getAIRouteRecommendation(routes) {
 
     let parsed;
     try {
-        parsed = JSON.parse(jsonText);
+        parsed = robustParseJSON(rawText);
         console.log('[Gemini] FULL RESPONSE:', JSON.stringify(parsed, null, 2));
     } catch (err) {
         console.error('[Gemini] Failed to parse response:', rawText);
@@ -124,4 +181,128 @@ export async function getAIRouteRecommendation(routes) {
 
     console.log(`[Gemini] Selected route: ${parsed.selected_route} | Risk: ${parsed.summary?.risk_level}`);
     return parsed;
+}
+
+/**
+ * AGENTIC LOGIC: True ReAct Tool-Calling Agent.
+ * This function creates a Chat session where Gemini can call tools
+ * to investigate the anomaly before making a final decision.
+ *
+ * @param {Object} trip - The current trip details
+ * @param {number} delayMinutes - The current delay in minutes
+ * @param {number} currentLat - Live/Simulated Latitude
+ * @param {number} currentLng - Live/Simulated Longitude
+ * @param {Object} currentRoute - The currently assigned route metrics
+ */
+export async function evaluateTripAnomaly(trip, delayMinutes, currentLat, currentLng, currentRoute) {
+    console.log(`[Gemini Agent] Starting autonomous investigation for Trip ${trip.id} (Delay: ${delayMinutes}m)`);
+
+    const toolsList = [{
+        functionDeclarations: [
+            {
+                name: "get_alternative_routes",
+                description: "Fetches alternative routes given the current location and destination coordinates. Returns route_ids.",
+                parameters: {
+                    type: "OBJECT",
+                    properties: {
+                        currentLat: { type: "NUMBER" },
+                        currentLng: { type: "NUMBER" },
+                        destLat: { type: "NUMBER" },
+                        destLng: { type: "NUMBER" }
+                    },
+                    required: ["currentLat", "currentLng", "destLat", "destLng"]
+                }
+            },
+            {
+                name: "analyze_route_segments",
+                description: "Analyzes an alternative route's segments for live traffic density and bad weather conditions. Call this on specific route_ids to verify safety.",
+                parameters: {
+                    type: "OBJECT",
+                    properties: {
+                        route_id: { type: "STRING" }
+                    },
+                    required: ["route_id"]
+                }
+            }
+        ]
+    }];
+
+    const chat = ai.chats.create({
+        model: 'gemini-2.5-flash',
+        config: { 
+            tools: toolsList,
+            temperature: 0.1 // Keep it deterministic
+        }
+    });
+
+    const initialPrompt = `You are an autonomous ReAct (Reasoning and Acting) Agent for logistics.
+Trip #${trip.id} is experiencing a severe delay of ${delayMinutes} minutes at location [${currentLat}, ${currentLng}].
+The destination is [${trip.dest_lat}, ${trip.dest_lng}].
+Delivery Deadline: ${currentRoute.deadline_timestamp || 'No hard deadline'}
+Current Calculated Slack Time: ${currentRoute.current_slack_hours} hours (Buffer before late arrival).
+Current Remaining Distance: ${currentRoute.distance_meters} meters.
+
+INSTRUCTIONS:
+1. Call "get_alternative_routes" using the current location and destination.
+2. For promising alternatives, call "analyze_route_segments" to check for bottlenecks (max_delay_ratio), overall traffic (avg_delay_ratio), and safety.
+3. PERFORM TRADE-OFF ANALYSIS:
+   - PRIORITY 1: DEADLINE ADHERENCE. If the "Current Calculated Slack Time" is negative or very low (e.g., < 0.25h), finding a faster route is CRITICAL.
+   - Compare the current route's cost (fuel + any toll) and current delay vs alternatives.
+   - A route with "max_delay_ratio" > 3.0 is a severe bottleneck (gridlock).
+   - "traffic_density_score" > 0.5 indicates widespread congestion.
+   - If an alternative saves significant time (e.g. > 15m) but costs 500-1000 INR more, weigh the urgency of the delivery deadline.
+4. If no good alternatives exist or they are excessively expensive for minimal gain, decide to "stay_course".
+
+When you have enough information, output ONLY a valid JSON decision (no markdown fences) in this exact format:
+{
+  "action": "stay_course" | "reroute",
+  "reasoning": "Detailed explanation. MUST mention specific costs (INR), time savings (minutes), traffic metrics (avg/max delay), and precisely how this affects the DELIVERY DEADLINE and SLACK TIME.",
+  "new_route_id": "<route_id if reroute, else null>"
+}
+`;
+
+    try {
+        let currentResponse = await chat.sendMessage({ message: initialPrompt });
+
+        // Agent Execution Loop (Max 5 iterations to prevent infinite loops)
+        for (let i = 0; i < 5; i++) {
+            if (currentResponse.functionCalls && currentResponse.functionCalls.length > 0) {
+                const call = currentResponse.functionCalls[0];
+                console.log(`[Gemini Agent] 🛠️ Calling Tool: ${call.name}`);
+                
+                let toolResult = {};
+                if (call.name === 'get_alternative_routes') {
+                    call.args.truckMileage = trip.mileage_kmpl;
+                    toolResult = await get_alternative_routes(call.args);
+                } else if (call.name === 'analyze_route_segments') {
+                    toolResult = await analyze_route_segments(call.args);
+                } else {
+                    toolResult = { error: "Unknown tool" };
+                }
+
+                // Send the result back to the Agent
+                currentResponse = await chat.sendMessage({
+                    message: [{
+                        functionResponse: {
+                            name: call.name,
+                            response: toolResult
+                        }
+                    }]
+                });
+            } else {
+                // Agent returned text (final decision)
+                const rawText = currentResponse.text.trim();
+                const parsed = robustParseJSON(rawText);
+                console.log('[Gemini Agent] Final Decision:', parsed.action);
+                return parsed;
+            }
+        }
+
+        console.warn('[Gemini Agent] Loop limit reached without final JSON.');
+        return { action: 'stay_course', reasoning: 'Agent timed out investigating.', new_route_id: null };
+
+    } catch (err) {
+        console.error('[Gemini Agent] Execution failed:', err);
+        return { action: 'stay_course', reasoning: 'Fallback due to agent crash.', new_route_id: null };
+    }
 }

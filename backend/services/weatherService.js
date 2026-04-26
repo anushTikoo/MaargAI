@@ -101,6 +101,9 @@ export function computeWeatherScore(main, rain1h, visibility, windSpeed) {
  * Returns an array of objects { score, weather_main } same length as input segments.
  * Null is returned for any segment where the API call fails.
  *
+/**
+ * Fetch weather scores for every segment using the midpoint of each segment.
+ *
  * @param {Array<{start_lat, start_lng, end_lat, end_lng}>} segments
  * @returns {Promise<Array<{score: number, weather_main: string} | null>>}
  */
@@ -113,11 +116,23 @@ export async function fetchSegmentWeatherScores(segments) {
         return new Array(segments.length).fill(null);
     }
 
-    console.log(`[Weather] Enriching ${segments.length} segment(s)...`);
+    console.log(`[Weather] Enriching route with ${segments.length} segment(s)...`);
 
-    const results = [];
+    // For demo/performance: Sample a max of 6 segments across the route
+    const maxSamples = 6;
+    const step = Math.max(1, Math.ceil(segments.length / maxSamples));
+    const sampleIndices = [];
+    for (let i = 0; i < segments.length; i += step) {
+        sampleIndices.push(i);
+    }
+    // Always include the last segment if not already included
+    if (sampleIndices[sampleIndices.length - 1] !== segments.length - 1) {
+        sampleIndices.push(segments.length - 1);
+    }
 
-    for (let i = 0; i < segments.length; i++) {
+    const results = new Array(segments.length).fill(null);
+
+    for (const i of sampleIndices) {
         const seg = segments[i];
         const midLat = (seg.start_lat + seg.end_lat) / 2;
         const midLng = (seg.start_lng + seg.end_lng) / 2;
@@ -127,10 +142,7 @@ export async function fetchSegmentWeatherScores(segments) {
             const response = await fetch(url);
 
             if (!response.ok) {
-                const body = await response.text().catch(() => '');
-                console.warn(`[Weather] Segment ${i}: HTTP ${response.status} — ${body}`);
-                results.push(null);
-                await new Promise((r) => setTimeout(r, 1050)); // delay even on error
+                console.warn(`[Weather] Segment ${i}: HTTP ${response.status}`);
                 continue;
             }
 
@@ -141,18 +153,27 @@ export async function fetchSegmentWeatherScores(segments) {
             const windSpeed = data.wind?.speed ?? null;
 
             const score = computeWeatherScore(main, rain1h, visibility, windSpeed);
-            console.log(`[Weather] Segment ${i}: ${main}, score=${score}`);
+            console.log(`[Weather] Segment ${i} Sample: ${main}, score=${score}`);
 
-            results.push({ score, weather_main: main });
+            results[i] = { score, weather_main: main };
         } catch (err) {
             console.warn(`[Weather] Segment ${i}: fetch error — ${err.message}`);
-            results.push(null);
         }
 
-        // Respect OpenWeather free-tier rate limit (~1 req/sec)
-        await new Promise((r) => setTimeout(r, 1050));
+        // Delay to respect rate limits
+        await new Promise((r) => setTimeout(r, 800));
     }
 
-    console.log(`[Weather] Complete: ${results.filter(Boolean).length}/${segments.length} segments enriched.`);
+    // Fill in the gaps: Assign the nearest sample's score to missing segments
+    let lastKnown = null;
+    for (let i = 0; i < results.length; i++) {
+        if (results[i]) {
+            lastKnown = results[i];
+        } else if (lastKnown) {
+            results[i] = { ...lastKnown };
+        }
+    }
+
+    console.log(`[Weather] Complete: Sampled ${sampleIndices.length} segments.`);
     return results;
 }

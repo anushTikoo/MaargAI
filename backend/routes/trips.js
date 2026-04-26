@@ -849,17 +849,36 @@ router.post('/locations', async (req, res) => {
             const polyline = tripResult.rows[0].polyline;
             if (polyline) {
                 const points = decodePolyline(polyline);
-                if (points.length > 10) {
-                    // Pick 6 evenly spaced waypoints to force the route shape in Google Maps tightly
-                    const waypointsCount = 6;
-                    const step = Math.floor(points.length / (waypointsCount + 1));
-                    const wps = [];
-                    for (let i = 1; i <= waypointsCount; i++) {
-                        if (points[step * i]) wps.push(points[step * i]);
+                if (points.length > 5) {
+                    // 1. Find the nearest point on the polyline to the truck's current position
+                    let nearestIndex = 0;
+                    let minDistance = Infinity;
+                    for (let i = 0; i < points.length; i++) {
+                        const d = Math.sqrt(
+                            Math.pow(points[i].lat - parsedLat, 2) + 
+                            Math.pow(points[i].lng - parsedLng, 2)
+                        );
+                        if (d < minDistance) {
+                            minDistance = d;
+                            nearestIndex = i;
+                        }
                     }
+
+                    // 2. Only pick waypoints from the REMAINING part of the path
+                    const remainingPoints = points.slice(nearestIndex);
                     
-                    if (wps.length > 0) {
-                        waypointsStr = '&waypoints=' + wps.map(p => `${p.lat},${p.lng}`).join('%7C'); // %7C is URL encoded pipe '|'
+                    if (remainingPoints.length > 5) {
+                        const waypointsCount = Math.min(10, remainingPoints.length - 2);
+                        const step = Math.floor(remainingPoints.length / (waypointsCount + 1));
+                        const wps = [];
+                        for (let i = 1; i <= waypointsCount; i++) {
+                            if (remainingPoints[step * i]) wps.push(remainingPoints[step * i]);
+                        }
+                        
+                        if (wps.length > 0) {
+                            // Using via: prefix to force the route shape ahead of the truck
+                            waypointsStr = '&waypoints=' + wps.map(p => `via:${p.lat},${p.lng}`).join('%7C'); 
+                        }
                     }
                 }
             }

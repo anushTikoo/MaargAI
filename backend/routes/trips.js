@@ -868,7 +868,8 @@ router.post('/locations', async (req, res) => {
                     const remainingPoints = points.slice(nearestIndex);
                     
                     if (remainingPoints.length > 5) {
-                        const waypointsCount = Math.min(10, remainingPoints.length - 2);
+                        // Picking 9 waypoints (the maximum standard for Google Maps mobile links)
+                        const waypointsCount = Math.min(9, remainingPoints.length - 2);
                         const step = Math.floor(remainingPoints.length / (waypointsCount + 1));
                         const wps = [];
                         for (let i = 1; i <= waypointsCount; i++) {
@@ -876,8 +877,8 @@ router.post('/locations', async (req, res) => {
                         }
                         
                         if (wps.length > 0) {
-                            // Using via: prefix to force the route shape ahead of the truck
-                            waypointsStr = '&waypoints=' + wps.map(p => `via:${p.lat},${p.lng}`).join('%7C'); 
+                            // Back to standard lat,lng format (via: is not supported in the URL scheme)
+                            waypointsStr = '&waypoints=' + wps.map(p => `${p.lat},${p.lng}`).join('%7C'); 
                         }
                     }
                 }

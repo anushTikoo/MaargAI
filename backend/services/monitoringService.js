@@ -124,66 +124,70 @@ async function processSingleTrip(trip) {
 
             const decision = await evaluateTripAnomaly(trip, delayMinutes, currentLat, currentLng, currentRouteStats);
                 
-                if (decision.action === 'reroute' && decision.new_route_id) {
-                    console.log(`[Worker] 🔄 AGENT DECISION: Rerouting Trip ${trip.id} to ${decision.new_route_id}`);
-                    
-                    const cachedRoute = getRouteFromCache(decision.new_route_id);
-                    let newRouteDbId = trip.current_route_id; // Default fallback
+                    // Format reasoning: Ensure it's a string and add a timestamp so the user sees it's fresh
+                    const freshReasoning = (Array.isArray(decision.reasoning) ? decision.reasoning.join(' ') : (decision.reasoning || '')) 
+                        + `\n\n(Last Evaluated: ${new Date().toLocaleTimeString()})`;
 
-                    if (cachedRoute) {
-                        console.log(`[Worker] Saving Agent Ad-Hoc Route to Database...`);
+                    if (decision.action === 'reroute' && decision.new_route_id) {
+                        console.log(`[Worker] 🔄 AGENT DECISION: Rerouting Trip ${trip.id} to ${decision.new_route_id}`);
                         
-                        // Find the next route_index letter for this trip (A, B, C...)
-                        const idxRes = await pool.query(
-                            'SELECT COUNT(*) AS route_count FROM routes WHERE trip_id = $1',
-                            [trip.id]
-                        );
-                        const nextIndex = String.fromCharCode(65 + parseInt(idxRes.rows[0].route_count));
+                        const cachedRoute = getRouteFromCache(decision.new_route_id);
+                        let newRouteDbId = trip.current_route_id; // Default fallback
 
-                        // Calculate estimated cost and risk for the UI
-                        const truckMileage = parseFloat(trip.mileage_kmpl) || 4.0;
-                        const fuelCost = (cachedRoute.distance / 1000 / truckMileage) * 90; // Fuel @ 90
-                        const totalCost = fuelCost + (cachedRoute.toll_cost || 0);
+                        if (cachedRoute) {
+                            console.log(`[Worker] Saving Agent Ad-Hoc Route to Database...`);
+                            
+                            // Find the next route_index letter for this trip (A, B, C...)
+                            const idxRes = await pool.query(
+                                'SELECT COUNT(*) AS route_count FROM routes WHERE trip_id = $1',
+                                [trip.id]
+                            );
+                            const nextIndex = String.fromCharCode(65 + parseInt(idxRes.rows[0].route_count));
 
-                        // Insert the new route
-                        const insertRes = await pool.query(`
-                            INSERT INTO routes 
-                            (trip_id, route_index, polyline, distance_meters, duration_seconds, has_tolls, toll_cost, is_ai_recommended, ai_total_cost_inr, ai_risk_level)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $8, 'low')
-                            RETURNING id
-                        `, [
-                            trip.id, 
-                            nextIndex, 
-                            cachedRoute.polyline, 
-                            cachedRoute.distance, 
-                            cachedRoute.duration, 
-                            cachedRoute.has_tolls || false,
-                            cachedRoute.toll_cost || 0,
-                            totalCost
-                        ]);
-                        
-                        newRouteDbId = insertRes.rows[0].id;
-                        console.log(`[Worker] Saved new route as ID: ${newRouteDbId} (Index ${nextIndex})`);
+                            // Calculate estimated cost and risk for the UI
+                            const truckMileage = parseFloat(trip.mileage_kmpl) || 4.0;
+                            const fuelCost = (cachedRoute.distance / 1000 / truckMileage) * 90; // Fuel @ 90
+                            const totalCost = fuelCost + (cachedRoute.toll_cost || 0);
+
+                            // Insert the new route
+                            const insertRes = await pool.query(`
+                                INSERT INTO routes 
+                                (trip_id, route_index, polyline, distance_meters, duration_seconds, has_tolls, toll_cost, is_ai_recommended, ai_total_cost_inr, ai_risk_level)
+                                VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $8, 'low')
+                                RETURNING id
+                            `, [
+                                trip.id, 
+                                nextIndex, 
+                                cachedRoute.polyline, 
+                                cachedRoute.distance, 
+                                cachedRoute.duration, 
+                                cachedRoute.has_tolls || false,
+                                cachedRoute.toll_cost || 0,
+                                totalCost
+                            ]);
+                            
+                            newRouteDbId = insertRes.rows[0].id;
+                            console.log(`[Worker] Saved new route as ID: ${newRouteDbId} (Index ${nextIndex})`);
+                        } else {
+                            console.warn(`[Worker] Route ${decision.new_route_id} not found in cache. Cannot save geometry!`);
+                        }
+
+                        // Update the trip with the new reasoning, decision, and the new route
+                        // We immediately set live_eta_seconds to the new route's duration so the frontend updates instantly.
+                        await pool.query(`
+                            UPDATE trips 
+                            SET ai_reroute_reason = $1, 
+                                current_route_id = $2, 
+                                ai_decision = $3, 
+                                live_eta_seconds = $4
+                            WHERE id = $5
+                        `, [freshReasoning, newRouteDbId, decision.action, cachedRoute.duration, trip.id]);
                     } else {
-                        console.warn(`[Worker] Route ${decision.new_route_id} not found in cache. Cannot save geometry!`);
+                        console.log(`[Worker] 🛣️ AGENT DECISION: Stay the course.`);
+                        await pool.query(`
+                            UPDATE trips SET ai_reroute_reason = $1, ai_decision = 'stay_course' WHERE id = $2
+                        `, [freshReasoning || 'AI evaluated alternative routes but decided staying the course is optimal.', trip.id]);
                     }
-
-                    // Update the trip with the new reasoning, decision, and the new route
-                    // We immediately set live_eta_seconds to the new route's duration so the frontend updates instantly.
-                    await pool.query(`
-                        UPDATE trips 
-                        SET ai_reroute_reason = $1, 
-                            current_route_id = $2, 
-                            ai_decision = $3, 
-                            live_eta_seconds = $4
-                        WHERE id = $5
-                    `, [decision.reasoning, newRouteDbId, decision.action, cachedRoute.duration, trip.id]);
-                } else {
-                    console.log(`[Worker] 🛣️ AGENT DECISION: Stay the course.`);
-                    await pool.query(`
-                        UPDATE trips SET ai_reroute_reason = $1, ai_decision = 'stay_course' WHERE id = $2
-                    `, [decision.reasoning || 'AI evaluated alternative routes but decided staying the course is optimal.', trip.id]);
-                }
             }
 
     } catch (err) {

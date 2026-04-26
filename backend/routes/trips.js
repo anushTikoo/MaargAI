@@ -765,7 +765,7 @@ router.post('/locations', async (req, res) => {
         const truckId = truckResult.rows[0].id;
 
         const tripResult = await pool.query(
-            `SELECT t.id, t.fleet_manager_id, t.status, t.source_lat, t.source_lng, t.ai_reroute_reason, r.is_ai_recommended
+            `SELECT t.id, t.fleet_manager_id, t.status, t.source_lat, t.source_lng, t.dest_lat, t.dest_lng, t.current_route_id, t.last_notified_route_id, t.ai_reroute_reason, r.is_ai_recommended
              FROM trips t
              LEFT JOIN routes r ON t.current_route_id = r.id
              WHERE t.truck_id = $1
@@ -784,6 +784,10 @@ router.post('/locations', async (req, res) => {
         const currentTripStatus = tripResult.rows[0].status;
         const sourceLat = Number(tripResult.rows[0].source_lat);
         const sourceLng = Number(tripResult.rows[0].source_lng);
+        const destLat = Number(tripResult.rows[0].dest_lat);
+        const destLng = Number(tripResult.rows[0].dest_lng);
+        let currentRouteId = tripResult.rows[0].current_route_id;
+        const lastNotifiedRouteId = tripResult.rows[0].last_notified_route_id;
 
         const distanceToSourceMeters = Number.isFinite(sourceLat) && Number.isFinite(sourceLng)
             ? calculateDistanceMeters(parsedLat, parsedLng, sourceLat, sourceLng)
@@ -797,13 +801,18 @@ router.post('/locations', async (req, res) => {
             Number.isFinite(distanceToSourceMeters) &&
             distanceToSourceMeters <= START_TRIP_RADIUS_METERS
         ) {
+            // Assign initial baseline route upon activation
+            const baselineRes = await pool.query(`SELECT id FROM routes WHERE trip_id = $1 AND route_index = 'A'`, [tripId]);
+            const baselineId = baselineRes.rows[0] ? baselineRes.rows[0].id : null;
+            if (baselineId) currentRouteId = baselineId;
+
             const activateTripResult = await pool.query(
                 `UPDATE trips
-                 SET status = 'active'
+                 SET status = 'active', current_route_id = $2
                  WHERE id = $1
                    AND status = 'not started'
                  RETURNING status`,
-                [tripId]
+                [tripId, baselineId]
             );
 
             if (activateTripResult.rowCount > 0) {
@@ -830,6 +839,17 @@ router.post('/locations', async (req, res) => {
             `UPDATE trips SET last_gps_lat = $1, last_gps_lng = $2 WHERE id = $3`,
             [parsedLat, parsedLng, tripId]
         );
+
+        let googleMapsUrl = null;
+        if (currentRouteId && currentRouteId !== lastNotifiedRouteId) {
+            // Either the initial route was just assigned, or the AI rerouted.
+            googleMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${parsedLat},${parsedLng}&destination=${destLat},${destLng}`;
+            
+            await pool.query(
+                `UPDATE trips SET last_notified_route_id = $1 WHERE id = $2`,
+                [currentRouteId, tripId]
+            );
+        }
 
         const shouldSyncLiveLocation = nextTripStatus === 'active';
 
@@ -860,7 +880,8 @@ router.post('/locations', async (req, res) => {
                 ai_recommendation: {
                     has_recommendation: !!tripResult.rows[0].ai_reroute_reason,
                     reasoning: tripResult.rows[0].ai_reroute_reason || null,
-                    is_ai_optimized: !!tripResult.rows[0].is_ai_recommended
+                    is_ai_optimized: !!tripResult.rows[0].is_ai_recommended,
+                    google_maps_url: googleMapsUrl
                 }
             },
         });

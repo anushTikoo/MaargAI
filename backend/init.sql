@@ -60,6 +60,7 @@ CREATE TABLE trips (
     baseline_eta_seconds INT,
     baseline_distance_meters INT,
     current_route_id INT,
+    last_notified_route_id INT,
     last_gps_lat DOUBLE PRECISION,
     last_gps_lng DOUBLE PRECISION,
     simulated_delay_seconds INT DEFAULT 0,

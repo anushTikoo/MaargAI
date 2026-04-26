@@ -796,6 +796,18 @@ router.post('/locations', async (req, res) => {
         let startedNow = false;
         let nextTripStatus = currentTripStatus;
 
+        // SELF-HEALING: If the trip is active but somehow missing its current_route_id, try to assign Route A
+        if (currentTripStatus === 'active' && !currentRouteId) {
+            console.log(`[Resiliency] Active trip ${tripId} missing current_route_id. Attempting to heal...`);
+            const healingRes = await pool.query(`SELECT id, polyline FROM routes WHERE trip_id = $1 AND route_index = 'A'`, [tripId]);
+            if (healingRes.rows[0]) {
+                currentRouteId = healingRes.rows[0].id;
+                tripResult.rows[0].polyline = healingRes.rows[0].polyline;
+                await pool.query(`UPDATE trips SET current_route_id = $1 WHERE id = $2`, [currentRouteId, tripId]);
+                console.log(`[Resiliency] Healed trip ${tripId} with Route ID: ${currentRouteId}`);
+            }
+        }
+
         if (
             currentTripStatus === 'not started' &&
             Number.isFinite(distanceToSourceMeters) &&

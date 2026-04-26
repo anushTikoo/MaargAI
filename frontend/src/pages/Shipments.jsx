@@ -602,7 +602,7 @@ export default function Shipments() {
                             {displayTrips.map((trip, index) => (
                                 <article
                                     key={trip.id}
-                                    className="group overflow-hidden rounded-2xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
+                                    className={`group overflow-hidden rounded-2xl border ${trip.status === 'active' && !trip.current_route_is_ai_recommended ? 'border-primary/30 bg-primary/[0.02]' : 'border-outline-variant/20 bg-surface-container-lowest'} shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md`}
                                 >
                                     <div className="h-1 w-full bg-linear-to-r from-primary via-primary-container to-secondary/50"></div>
                                     <div className="p-5 md:p-6 space-y-3">
@@ -616,11 +616,21 @@ export default function Shipments() {
                                                         <span className="material-symbols-outlined text-[1rem]">local_shipping</span>
                                                         Truck {trip.truck_number || `#${trip.truck_id}`}
                                                     </span>
-                                                    <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.08em] ${trip.status === 'completed' ? 'bg-green-50 text-green-700' : 'bg-secondary/10 text-secondary'}`}>
+                                                    <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.08em] ${
+                                                        trip.status === 'completed' 
+                                                            ? 'bg-green-50 text-green-700' 
+                                                            : trip.status === 'active' && !trip.current_route_is_ai_recommended
+                                                                ? 'bg-primary/10 text-primary animate-pulse'
+                                                                : 'bg-secondary/10 text-secondary'
+                                                    }`}>
                                                         <span className="material-symbols-outlined text-[1rem]">
-                                                            {trip.status === 'completed' ? 'check_circle' : 'schedule'}
+                                                            {trip.status === 'completed' 
+                                                                ? 'check_circle' 
+                                                                : trip.status === 'active' && !trip.current_route_is_ai_recommended 
+                                                                    ? 'psychology' 
+                                                                    : 'schedule'}
                                                         </span>
-                                                        {trip.status || 'active'}
+                                                        {trip.status === 'active' && !trip.current_route_is_ai_recommended ? 'Analyzing' : (trip.status || 'active')}
                                                     </span>
                                                 </div>
                                                 <p className="text-sm text-secondary">
@@ -628,18 +638,31 @@ export default function Shipments() {
                                                 </p>
                                             </div>
 
-                                            <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low px-4 py-3 min-w-44">
-                                                <p className="text-[0.7rem] font-black uppercase tracking-[0.12em] text-secondary mb-1">Baseline ETA</p>
-                                                <div className="flex items-end gap-2">
-                                                    <span className="material-symbols-outlined text-primary text-[1.15rem]">timer</span>
-                                                    <span className="text-2xl font-black text-on-surface leading-none">
-                                                        {formatEtaSeconds(trip.baseline_eta_seconds)}
-                                                    </span>
+                                            {trip.status !== 'not started' && (
+                                                <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low px-4 py-3 min-w-44 flex flex-col justify-center">
+                                                    {trip.status === 'active' && !trip.current_route_is_ai_recommended ? (
+                                                        <div className="flex flex-col items-center justify-center text-center">
+                                                            <div className="flex items-center gap-2 text-primary font-bold animate-pulse mb-1">
+                                                                <span className="material-symbols-outlined text-[1.2rem] animate-spin" style={{ animationDuration: '3s' }}>data_usage</span>
+                                                                Analyzing...
+                                                            </div>
+                                                            <p className="text-[10px] text-secondary leading-tight uppercase tracking-wider font-semibold">
+                                                                MaargAI Route Evaluation
+                                                            </p>
+                                                        </div>
+                                                    ) : (
+                                                        <>
+                                                            <p className="text-[0.7rem] font-black uppercase tracking-[0.12em] text-secondary mb-1">ETA</p>
+                                                            <div className="flex items-end gap-2">
+                                                                <span className="material-symbols-outlined text-primary text-[1.15rem]">timer</span>
+                                                                <span className="text-2xl font-black text-on-surface leading-none">
+                                                                    {formatEtaSeconds(trip.current_route_duration_seconds || trip.baseline_eta_seconds).replace(/ \d+s$/, '').replace(/^\d+s$/, '< 1m')}
+                                                                </span>
+                                                            </div>
+                                                        </>
+                                                    )}
                                                 </div>
-                                                <p className="text-xs text-secondary mt-2">
-                                                    {trip.baseline_eta_seconds ? `${trip.baseline_eta_seconds} seconds` : 'No baseline ETA available'}
-                                                </p>
-                                            </div>
+                                            )}
                                         </div>
 
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 -mt-4 md:-mt-5">
@@ -669,14 +692,55 @@ export default function Shipments() {
                                                 <span className="material-symbols-outlined text-[0.95rem]">event</span>
                                                 Deadline: {formatDateLabel(trip.deadline_timestamp)}
                                             </span>
-                                            <span className="inline-flex items-center gap-2 rounded-full bg-surface-container-low px-3 py-1 text-xs font-semibold text-secondary border border-outline-variant/20">
-                                                <span className="material-symbols-outlined text-[0.95rem]">straighten</span>
-                                                Distance: {formatDistanceMeters(trip.current_route_distance_meters)}
-                                            </span>
-                                            <span className="inline-flex items-center gap-2 rounded-full bg-surface-container-low px-3 py-1 text-xs font-semibold text-secondary border border-outline-variant/20">
-                                                <span className="material-symbols-outlined text-[0.95rem]">toll</span>
-                                                Tolls: {trip.current_route_has_tolls ? 'Yes' : 'No'}
-                                            </span>
+                                            {trip.status !== 'not started' && (
+                                                trip.current_route_is_ai_recommended ? (
+                                                    <>
+                                                        <span className="inline-flex items-center gap-2 rounded-full bg-surface-container-low px-3 py-1 text-xs font-semibold text-secondary border border-outline-variant/20">
+                                                            <span className="material-symbols-outlined text-[0.95rem]">straighten</span>
+                                                            Distance: {formatDistanceMeters(trip.current_route_distance_meters)}
+                                                        </span>
+                                                        <span className="inline-flex items-center gap-2 rounded-full bg-surface-container-low px-3 py-1 text-xs font-semibold text-secondary border border-outline-variant/20">
+                                                            <span className="material-symbols-outlined text-[0.95rem]">toll</span>
+                                                            Tolls: {trip.current_route_has_tolls ? 'Yes' : 'No'}
+                                                        </span>
+                                                        <span className="inline-flex items-center gap-2 rounded-full bg-surface-container-low px-3 py-1 text-xs font-semibold text-green-700 border border-green-200 bg-green-50">
+                                                            <span className="material-symbols-outlined text-[0.95rem]">payments</span>
+                                                            Cost: ₹{trip.current_route_ai_total_cost_inr || 0}
+                                                        </span>
+                                                        {trip.current_route_ai_slack_time_hours !== null && (
+                                                            <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold border ${
+                                                                Number(trip.current_route_ai_slack_time_hours) < 0 
+                                                                    ? 'bg-red-50 text-red-700 border-red-200' 
+                                                                    : Number(trip.current_route_ai_slack_time_hours) < 0.5 
+                                                                        ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                                                        : 'bg-green-50 text-green-700 border-green-200'
+                                                            }`}>
+                                                                <span className="material-symbols-outlined text-[0.95rem]">hourglass_empty</span>
+                                                                Slack: {trip.current_route_ai_slack_time_hours}h
+                                                            </span>
+                                                        )}
+                                                        {trip.current_route_ai_risk_level && (
+                                                            <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold border uppercase tracking-wider ${
+                                                                trip.current_route_ai_risk_level === 'high' 
+                                                                    ? 'bg-red-50 text-red-700 border-red-200' 
+                                                                    : trip.current_route_ai_risk_level === 'medium' 
+                                                                        ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                                                        : 'bg-green-50 text-green-700 border-green-200'
+                                                            }`}>
+                                                                <span className="material-symbols-outlined text-[0.95rem]">
+                                                                    {trip.current_route_ai_risk_level === 'high' ? 'warning' : 'verified_user'}
+                                                                </span>
+                                                                {trip.current_route_ai_risk_level} Risk
+                                                            </span>
+                                                        )}
+                                                    </>
+                                                ) : trip.status === 'active' && (
+                                                    <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 border border-blue-200">
+                                                        <span className="material-symbols-outlined text-[0.95rem]">route</span>
+                                                        Awaiting best route
+                                                    </span>
+                                                )
+                                            )}
                                             <button
                                                 type="button"
                                                 onClick={() => handleDeleteClick(trip)}

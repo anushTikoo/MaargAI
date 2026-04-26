@@ -692,7 +692,7 @@ export default function Shipments() {
                                             )}
                                         </div>
 
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 -mt-4 md:-mt-5">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                             <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low px-4 py-4">
                                                 <div className="flex items-center gap-2 mb-2 text-secondary">
                                                     <span className="material-symbols-outlined text-[1rem]">trip_origin</span>

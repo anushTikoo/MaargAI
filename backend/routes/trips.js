@@ -765,7 +765,7 @@ router.post('/locations', async (req, res) => {
         const truckId = truckResult.rows[0].id;
 
         const tripResult = await pool.query(
-            `SELECT t.id, t.fleet_manager_id, t.status, t.source_lat, t.source_lng, t.dest_lat, t.dest_lng, t.current_route_id, t.last_notified_route_id, t.ai_reroute_reason, r.is_ai_recommended
+            `SELECT t.id, t.fleet_manager_id, t.status, t.source_lat, t.source_lng, t.dest_lat, t.dest_lng, t.current_route_id, t.last_notified_route_id, t.ai_reroute_reason, r.is_ai_recommended, r.polyline
              FROM trips t
              LEFT JOIN routes r ON t.current_route_id = r.id
              WHERE t.truck_id = $1
@@ -802,9 +802,12 @@ router.post('/locations', async (req, res) => {
             distanceToSourceMeters <= START_TRIP_RADIUS_METERS
         ) {
             // Assign initial baseline route upon activation
-            const baselineRes = await pool.query(`SELECT id FROM routes WHERE trip_id = $1 AND route_index = 'A'`, [tripId]);
+            const baselineRes = await pool.query(`SELECT id, polyline FROM routes WHERE trip_id = $1 AND route_index = 'A'`, [tripId]);
             const baselineId = baselineRes.rows[0] ? baselineRes.rows[0].id : null;
-            if (baselineId) currentRouteId = baselineId;
+            if (baselineId) {
+                currentRouteId = baselineId;
+                tripResult.rows[0].polyline = baselineRes.rows[0].polyline;
+            }
 
             const activateTripResult = await pool.query(
                 `UPDATE trips
@@ -842,8 +845,20 @@ router.post('/locations', async (req, res) => {
 
         let googleMapsUrl = null;
         if (currentRouteId && currentRouteId !== lastNotifiedRouteId) {
+            let waypointsStr = '';
+            const polyline = tripResult.rows[0].polyline;
+            if (polyline) {
+                const points = decodePolyline(polyline);
+                if (points.length > 5) {
+                    // Pick 3 evenly spaced waypoints to force the route shape in Google Maps
+                    const step = Math.floor(points.length / 4);
+                    const wps = [points[step], points[step * 2], points[step * 3]];
+                    waypointsStr = '&waypoints=' + wps.map(p => `${p.lat},${p.lng}`).join('%7C'); // %7C is URL encoded pipe '|'
+                }
+            }
+
             // Either the initial route was just assigned, or the AI rerouted.
-            googleMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${parsedLat},${parsedLng}&destination=${destLat},${destLng}`;
+            googleMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${parsedLat},${parsedLng}&destination=${destLat},${destLng}${waypointsStr}`;
             
             await pool.query(
                 `UPDATE trips SET last_notified_route_id = $1 WHERE id = $2`,

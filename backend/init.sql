@@ -82,6 +82,10 @@ CREATE TABLE routes (
     duration_seconds INT,
     has_tolls BOOLEAN DEFAULT FALSE,
     toll_cost NUMERIC(10, 2) DEFAULT 0.00,
+    is_ai_recommended BOOLEAN DEFAULT FALSE,
+    ai_total_cost_inr NUMERIC(10, 2),
+    ai_slack_time_hours NUMERIC(10, 2),
+    ai_risk_level VARCHAR(20),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

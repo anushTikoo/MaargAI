@@ -5,6 +5,7 @@ import realtimeDB from '../services/firebase.js';
 import { decodePolyline, segmentRoute } from '../services/segmentationService.js';
 import { fetchSegmentTrafficDurations } from '../services/trafficService.js';
 import { fetchSegmentWeatherScores } from '../services/weatherService.js';
+import { getAIRouteRecommendation } from '../services/geminiService.js';
 
 const router = express.Router();
 const START_TRIP_RADIUS_METERS = 250;
@@ -54,7 +55,11 @@ router.get('/', async (req, res) => {
                 r.distance_meters AS current_route_distance_meters,
                 r.duration_seconds AS current_route_duration_seconds,
                 r.has_tolls AS current_route_has_tolls,
-                r.toll_cost AS current_route_toll_cost
+                r.toll_cost AS current_route_toll_cost,
+                r.is_ai_recommended AS current_route_is_ai_recommended,
+                r.ai_total_cost_inr AS current_route_ai_total_cost_inr,
+                r.ai_slack_time_hours AS current_route_ai_slack_time_hours,
+                r.ai_risk_level AS current_route_ai_risk_level
             FROM trips t
             JOIN trucks tr ON tr.id = t.truck_id
             LEFT JOIN routes r ON r.id = t.current_route_id
@@ -109,12 +114,16 @@ router.get('/active-map', async (req, res) => {
                 COALESCE(current_route.distance_meters, fallback_route.distance_meters) AS distance_meters,
                 COALESCE(current_route.duration_seconds, fallback_route.duration_seconds) AS duration_seconds,
                 COALESCE(current_route.has_tolls, fallback_route.has_tolls) AS has_tolls,
-                COALESCE(current_route.toll_cost, fallback_route.toll_cost) AS toll_cost
+                COALESCE(current_route.toll_cost, fallback_route.toll_cost) AS toll_cost,
+                COALESCE(current_route.is_ai_recommended, fallback_route.is_ai_recommended) AS is_ai_recommended,
+                COALESCE(current_route.ai_total_cost_inr, fallback_route.ai_total_cost_inr) AS ai_total_cost_inr,
+                COALESCE(current_route.ai_slack_time_hours, fallback_route.ai_slack_time_hours) AS ai_slack_time_hours,
+                COALESCE(current_route.ai_risk_level, fallback_route.ai_risk_level) AS ai_risk_level
             FROM trips t
             JOIN trucks tr ON tr.id = t.truck_id
             LEFT JOIN routes current_route ON current_route.id = t.current_route_id
             LEFT JOIN LATERAL (
-                SELECT id, route_index, polyline, distance_meters, duration_seconds, has_tolls, toll_cost
+                SELECT id, route_index, polyline, distance_meters, duration_seconds, has_tolls, toll_cost, is_ai_recommended, ai_total_cost_inr, ai_slack_time_hours, ai_risk_level
                 FROM routes
                 WHERE trip_id = t.id
                 ORDER BY route_index ASC
@@ -151,7 +160,13 @@ router.get('/active-map', async (req, res) => {
                     distance_meters: activeTrip.distance_meters,
                     duration_seconds: activeTrip.duration_seconds,
                     has_tolls: activeTrip.has_tolls,
-                    toll_cost: activeTrip.toll_cost,
+                    toll_cost: activeTrip.has_tolls
+                        ? (parseFloat(activeTrip.toll_cost) > 0 ? parseFloat(activeTrip.toll_cost) : null)
+                        : 0,
+                    is_ai_recommended: activeTrip.is_ai_recommended,
+                    ai_total_cost_inr: activeTrip.ai_total_cost_inr,
+                    ai_slack_time_hours: activeTrip.ai_slack_time_hours,
+                    ai_risk_level: activeTrip.ai_risk_level
                 }
                 : null,
         }));
@@ -233,7 +248,7 @@ router.get('/:id/intelligence', async (req, res) => {
 
         const currentRouteId = tripRes.rows[0].current_route_id;
         const tripDeadline = tripRes.rows[0].deadline_timestamp; // Might be null
-        const truckMileage = parseFloat(tripRes.rows[0].mileage_kmpl) || 4.0; 
+        const truckMileage = parseFloat(tripRes.rows[0].mileage_kmpl) || 4.0;
         const FUEL_PRICE_PER_LITRE = 90;
 
         // 2. Fetch ALL routes for this trip, ordered by route_index (A, B, C...)
@@ -340,7 +355,7 @@ router.get('/:id/intelligence', async (req, res) => {
                         metrics.reliability_status = 'unstable';
                     }
                 }
-                
+
                 // --- NEW CALCULATIONS ---
                 const fuelCost = (route.distance_meters / 1000 / truckMileage) * FUEL_PRICE_PER_LITRE;
 
@@ -349,24 +364,24 @@ router.get('/:id/intelligence', async (req, res) => {
                 if (tripDeadline) {
                     const trafficMultiplier = metrics.avg_delay || 1.0;
                     const adjustedDurationSec = route.duration_seconds * trafficMultiplier;
-                    
+
                     const now = new Date();
                     const etaDate = new Date(now.getTime() + (adjustedDurationSec * 1000));
                     const deadlineDate = new Date(tripDeadline);
-                    
+
                     const slackMs = deadlineDate.getTime() - etaDate.getTime();
-                    const slackMinutes = Math.floor(slackMs / 60000);
-                    
+                    const slackHours = parseFloat((slackMs / 3600000).toFixed(2));
+
                     let status = 'on_track';
-                    if (slackMinutes < 0) {
+                    if (slackHours < 0) {
                         status = 'late';
-                    } else if (slackMinutes <= 15) {
+                    } else if (slackHours <= 0.25) { // 0.25h = 15m
                         status = 'critical';
                     }
 
                     deadlineAnalysis = {
                         predicted_arrival: etaDate.toISOString(),
-                        slack_time_minutes: slackMinutes,
+                        slack_time_hours: slackHours,
                         status: status
                     };
                 }
@@ -374,11 +389,13 @@ router.get('/:id/intelligence', async (req, res) => {
                 return {
                     route_id: route.id,
                     route_index: route.route_index,
-                    distance_meters: route.distance_meters,
-                    duration_seconds: route.duration_seconds,
+                    distance_km: parseFloat((route.distance_meters / 1000).toFixed(2)),
+                    duration_hours: parseFloat((route.duration_seconds / 3600).toFixed(2)),
                     has_tolls: route.has_tolls,
-                    toll_cost: parseFloat(route.toll_cost || 0),
-                    fuel_cost: parseFloat(fuelCost.toFixed(2)),
+                    toll_cost_inr: route.has_tolls
+                        ? (parseFloat(route.toll_cost) > 0 ? parseFloat(route.toll_cost) : "not available")
+                        : 0,
+                    fuel_cost_inr: parseFloat(fuelCost.toFixed(2)),
                     is_current: route.id === currentRouteId,
                     metrics: {
                         ...metrics,
@@ -484,6 +501,120 @@ async function enrichTripSegments(tripId) {
     }
 
     console.log(`[Enrichment] Complete for trip ${tripId}.`);
+
+    // --- AI RECOMMENDATION ---
+    // After all segments are enriched, pull computed metrics per route
+    // and ask Gemini to pick the best one.
+    try {
+        const tripMeta = await pool.query(
+            `SELECT t.deadline_timestamp, tr.mileage_kmpl
+             FROM trips t
+             JOIN trucks tr ON tr.id = t.truck_id
+             WHERE t.id = $1`,
+            [tripId]
+        );
+
+        const deadlineTs = tripMeta.rows[0]?.deadline_timestamp ?? null;
+        const mileageKmpl = parseFloat(tripMeta.rows[0]?.mileage_kmpl) || 4.0;
+        const FUEL_PRICE = 90;
+
+        const allRoutesRes = await pool.query(
+            `SELECT
+                r.id,
+                r.route_index,
+                r.distance_meters,
+                r.duration_seconds,
+                r.has_tolls,
+                r.toll_cost,
+                COALESCE(AVG(ts.delay_ratio), null)        AS avg_delay,
+                COALESCE(AVG(ts.weather_score), null)      AS avg_weather,
+                COALESCE(MAX(ts.weather_score), null)      AS max_weather,
+                COALESCE(MAX(ts.delay_ratio), null)        AS max_delay,
+                COUNT(CASE WHEN ts.delay_ratio > 1.5 THEN 1 END)::float /
+                    NULLIF(COUNT(ts.id), 0)                AS congestion_density
+             FROM routes r
+             LEFT JOIN trip_segments ts ON ts.route_id = r.id
+             WHERE r.trip_id = $1
+             GROUP BY r.id
+             ORDER BY r.route_index ASC`,
+            [tripId]
+        );
+
+        const geminiPayload = allRoutesRes.rows.map((r) => {
+            const avgDelay   = parseFloat(r.avg_delay)   || 1.0;
+            const maxDelay   = parseFloat(r.max_delay)   || 1.0;
+            const density    = parseFloat(r.congestion_density) || 0;
+            const avgWeather = parseFloat(r.avg_weather) || 0;
+            const maxWeather = parseFloat(r.max_weather) || 0;
+
+            const excessAvg  = Math.max(0, avgDelay - 1);
+            const excessMax  = Math.max(0, maxDelay - 1);
+            const reliability = parseFloat(
+                ((excessAvg * 0.40) + (excessMax * 0.30) + (density * 0.20)
+                + (avgWeather * 0.10) + (maxWeather * 0.30)).toFixed(3)
+            );
+
+            const etaHours = parseFloat((r.duration_seconds * avgDelay / 3600).toFixed(2));
+            const fuelCostInr = parseFloat(((r.distance_meters / 1000 / mileageKmpl) * FUEL_PRICE).toFixed(2));
+            const tollCostInr = r.has_tolls
+                ? (parseFloat(r.toll_cost) > 0 ? parseFloat(r.toll_cost) : null)
+                : 0;
+
+            let slackHours = null;
+            if (deadlineTs) {
+                const adjustedDurMs = r.duration_seconds * avgDelay * 1000;
+                const eta = new Date(Date.now() + adjustedDurMs);
+                slackHours = parseFloat(((new Date(deadlineTs) - eta) / 3600000).toFixed(2));
+            }
+
+            return {
+                id: r.route_index,
+                eta_hours: etaHours,
+                fuel_cost_inr: fuelCostInr,
+                toll_cost_inr: tollCostInr,
+                reliability_score: reliability,
+                slack_time_hours: slackHours
+            };
+        });
+
+        const recommendation = await getAIRouteRecommendation(geminiPayload);
+        const selectedIndex  = recommendation.selected_route;
+
+        // Reset all flags then set the winner
+        await pool.query('UPDATE routes SET is_ai_recommended = FALSE WHERE trip_id = $1', [tripId]);
+        await pool.query(
+            `UPDATE routes 
+             SET is_ai_recommended = TRUE,
+                 ai_total_cost_inr = $3,
+                 ai_slack_time_hours = $4,
+                 ai_risk_level = $5
+             WHERE trip_id = $1 AND route_index = $2`,
+            [
+                tripId, 
+                selectedIndex,
+                recommendation.summary?.total_cost_inr || null,
+                recommendation.summary?.slack_time_hours || null,
+                recommendation.summary?.risk_level || null
+            ]
+        );
+
+        // Also update current_route_id on the trip so the map shows the right one
+        const winnerRes = await pool.query(
+            'SELECT id FROM routes WHERE trip_id = $1 AND route_index = $2',
+            [tripId, selectedIndex]
+        );
+        if (winnerRes.rowCount > 0) {
+            await pool.query(
+                'UPDATE trips SET current_route_id = $1 WHERE id = $2',
+                [winnerRes.rows[0].id, tripId]
+            );
+        }
+
+        console.log(`[Gemini] Trip ${tripId}: AI selected route ${selectedIndex}. Flag saved.`);
+    } catch (geminiErr) {
+        console.error(`[Gemini] Recommendation failed for trip ${tripId}:`, geminiErr.message);
+        // Non-fatal — enrichment still succeeded; route just won't have a flag yet
+    }
 }
 
 
@@ -933,23 +1064,23 @@ router.post('/create-trip', async (req, res) => {
             }
 
             // Phase 5: Task 11 & 12 - Select Baseline Route & Update Trip
-            // Google's best route is always the first one (index 'A')
+            // Google's best route is always the first one (index 'A'). We only set baseline metrics.
+            // current_route_id remains NULL until Gemini makes a decision.
             if (routeMapping['A'] && fetchedRoutes[0]) {
-                const baselineRouteId = routeMapping['A'];
                 const baselineDuration = fetchedRoutes[0].durationSeconds;
                 const baselineDistance = fetchedRoutes[0].distanceMeters;
 
                 const updateTripQuery = `
                     UPDATE trips
-                    SET current_route_id = $1, baseline_eta_seconds = $2, baseline_distance_meters = $3
-                    WHERE id = $4
+                    SET baseline_eta_seconds = $1, baseline_distance_meters = $2
+                    WHERE id = $3
                 `;
-                await client.query(updateTripQuery, [baselineRouteId, baselineDuration, baselineDistance, trip_id]);
+                await client.query(updateTripQuery, [baselineDuration, baselineDistance, trip_id]);
 
                 // Update in-memory reference to send accurately back in response
-                trip.current_route_id = baselineRouteId;
                 trip.baseline_eta_seconds = baselineDuration;
                 trip.baseline_distance_meters = baselineDistance;
+                trip.current_route_id = null;
             }
 
             await client.query('COMMIT');

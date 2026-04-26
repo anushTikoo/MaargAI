@@ -68,12 +68,18 @@ async function processSingleTrip(trip) {
         const liveEtaSeconds = routes[0].durationSeconds;
         const liveDistanceMeters = routes[0].distanceMeters;
 
-        // 3. Apply the "Chaos Monkey" (Simulated Delay)
-        // This is where the Demo magic happens.
-        const totalDelaySeconds = liveEtaSeconds - trip.baseline_eta_seconds + (trip.simulated_delay_seconds || 0);
+        // 3. Calculate Delay
+        // Predicted Arrival = Current Time + Live ETA
+        // Planned Arrival = Created At + Baseline ETA
+        const createdAtMs = new Date(trip.created_at).getTime();
+        const plannedArrivalMs = createdAtMs + (trip.baseline_eta_seconds * 1000);
+        const predictedArrivalMs = Date.now() + (liveEtaSeconds * 1000);
+        
+        // Total delay is (Predicted - Planned) + any artificial chaos we injected
+        const totalDelaySeconds = Math.floor((predictedArrivalMs - plannedArrivalMs) / 1000) + (trip.simulated_delay_seconds || 0);
         const delayMinutes = Math.floor(totalDelaySeconds / 60);
 
-        console.log(`[Worker] Trip ${trip.id} | Delay: ${delayMinutes} mins | Simulated: ${trip.simulated_delay_seconds / 60} mins`);
+        console.log(`[Worker] Trip ${trip.id} | Predicted Delay: ${delayMinutes} mins (Simulated: ${trip.simulated_delay_seconds / 60}m)`);
 
         // 4. Save Checkpoint
         // Map the string risk level to a numerical score for the checkpoints table

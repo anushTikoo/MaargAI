@@ -63,7 +63,9 @@ router.post('/inject-delay', async (req, res) => {
         // 4. TRIGGER THE LOCATION UPDATE (Syncs Firebase & Map)
         if (warpedLat && warpedLng && truck_number) {
             console.log(`[Simulation] Triggering live location sync for truck ${truck_number}...`);
-            const baseUrl = `http://localhost:${process.env.PORT || 3000}`;
+            // Use 127.0.0.1 and the actual assigned PORT for Cloud Run compatibility
+            const loopbackPort = process.env.PORT || 3000;
+            const baseUrl = `http://127.0.0.1:${loopbackPort}`;
             try {
                 const locRes = await fetch(`${baseUrl}/api/trips/locations`, {
                     method: 'POST',

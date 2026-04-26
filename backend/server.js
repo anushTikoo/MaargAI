@@ -58,7 +58,7 @@ app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 
   // HACKATHON AUTOMATION: Run the monitoring loop every 2 minutes
-  const MONITORING_INTERVAL_MS = 2 * 60 * 1000;
+  const MONITORING_INTERVAL_MS = 1 * 60 * 1000;
   setInterval(async () => {
     console.log('[Internal Worker] Starting background monitoring check...');
     const start = Date.now();

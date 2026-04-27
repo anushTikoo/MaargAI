@@ -619,10 +619,11 @@ async function enrichTripSegments(tripId) {
 
         // Also update current_route_id on the trip so the map shows the right one
         const winnerRes = await pool.query(
-            'SELECT id FROM routes WHERE trip_id = $1 AND route_index = $2',
+            'SELECT id, distance_meters, duration_seconds FROM routes WHERE trip_id = $1 AND route_index = $2',
             [tripId, selectedIndex]
         );
         if (winnerRes.rowCount > 0) {
+            const winner = winnerRes.rows[0];
             const fullReasoning = Array.isArray(recommendation.reasoning) 
                 ? recommendation.reasoning.join('\n\n') 
                 : (recommendation.reasoning || 'Initial route selected by AI.');
@@ -631,9 +632,11 @@ async function enrichTripSegments(tripId) {
                 `UPDATE trips 
                  SET current_route_id = $1, 
                      ai_decision = 'stay_course', 
-                     ai_reroute_reason = $2 
-                 WHERE id = $3`,
-                [winnerRes.rows[0].id, fullReasoning, tripId]
+                     ai_reroute_reason = $2,
+                     live_eta_seconds = $3,
+                     live_distance_meters = $4
+                 WHERE id = $5`,
+                [winner.id, fullReasoning, winner.duration_seconds, winner.distance_meters, tripId]
             );
         }
 

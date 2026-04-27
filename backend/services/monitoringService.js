@@ -15,7 +15,7 @@ export async function processActiveTrips() {
     try {
         // 1. Fetch active trips that have a current route
         const { rows: trips } = await pool.query(`
-            SELECT t.*, tr.mileage_kmpl, r.polyline, r.distance_meters as route_distance, r.duration_seconds as route_duration
+            SELECT t.*, tr.mileage_kmpl, r.polyline, r.route_index as current_route_index, r.distance_meters as route_distance, r.duration_seconds as route_duration
             FROM trips t
             JOIN trucks tr ON t.truck_id = tr.id
             LEFT JOIN routes r ON t.current_route_id = r.id
@@ -63,9 +63,16 @@ async function processSingleTrip(trip) {
             return;
         }
 
-        // Taking the first (best) route returned
-        const liveEtaSeconds = routes[0].durationSeconds;
-        const liveDistanceMeters = routes[0].distanceMeters;
+        // Map route_index (A, B, C...) to array index (0, 1, 2...)
+        // Default to 0 if something goes wrong.
+        const routeIdxMap = { 'A': 0, 'B': 1, 'C': 2 };
+        const assignedIdx = routeIdxMap[trip.current_route_index] || 0;
+        
+        // Use the assigned route if available in Google's alternatives, else fallback to best.
+        const bestRoute = routes[assignedIdx] || routes[0];
+
+        const liveEtaSeconds = bestRoute.durationSeconds;
+        const liveDistanceMeters = bestRoute.distanceMeters;
 
         // 3. Calculate Delay
         // Predicted Arrival = Current Time + Live ETA

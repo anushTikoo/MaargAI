@@ -178,7 +178,11 @@ async function evaluateTriggers(trip, delayMinutes, liveSlackTimeHours, liveEtaS
 
             console.log(`[Worker] 📊 Trip ${trip.id} Reliability: current=${currentReliability.toFixed(3)}, prev=${prevReliability.toFixed(3)}, delta=${delta.toFixed(3)}`);
 
-            if (currentReliability >= RELIABILITY_SPIKE_ABSOLUTE_MIN && delta >= RELIABILITY_SPIKE_DELTA_MIN) {
+            // COLD-START GUARD: skip if no real baseline exists yet (first run = prev is null/0).
+            // A delta against 0 is meaningless and causes false spikes.
+            const hasPreviousBaseline = trip.last_route_reliability !== null && trip.last_route_reliability !== undefined;
+
+            if (hasPreviousBaseline && currentReliability >= RELIABILITY_SPIKE_ABSOLUTE_MIN && delta >= RELIABILITY_SPIKE_DELTA_MIN) {
                 console.log(`[Worker] 🚦 TRIGGER 2 (Risk Spike) fired for Trip ${trip.id}.`);
                 return { shouldCallAI: true, reason: 'risk_spike', currentReliability };
             }
@@ -264,6 +268,20 @@ async function computeLightweightReliability(polyline, distanceMeters) {
  * Calls the Gemini ReAct Agent and persists its decision.
  */
 async function runAIEvaluation(trip, delayMinutes, currentLat, currentLng, liveEtaSeconds, liveDistanceMeters, liveSlackTimeHours, triggerReason) {
+    // CONCURRENT-CYCLE GUARD: re-read last_ai_trigger_at from DB.
+    // A Gemini call can take 60-70s. If another worker cycle started while the first was
+    // still running, both would try to call AI. We skip if AI was already triggered in the
+    // last 2 minutes (well within a single worker interval).
+    const freshCheck = await pool.query('SELECT last_ai_trigger_at FROM trips WHERE id = $1', [trip.id]);
+    const freshLastTrigger = freshCheck.rows[0]?.last_ai_trigger_at;
+    if (freshLastTrigger) {
+        const minutesSince = (Date.now() - new Date(freshLastTrigger).getTime()) / 60000;
+        if (minutesSince < 2) {
+            console.log(`[Worker] ⏭️  Skipping AI call for Trip ${trip.id} — another cycle already triggered ${minutesSince.toFixed(1)}m ago.`);
+            return;
+        }
+    }
+
     console.log(`[Worker] 🤖 Invoking Gemini Agent for Trip ${trip.id} (reason: ${triggerReason})...`);
 
     const currentRouteStats = {
@@ -327,6 +345,8 @@ async function handleReroute(trip, decision, freshReasoning, currentLat, current
     if (existingRes.rowCount > 0) {
         newRouteDbId = existingRes.rows[0].id;
         console.log(`[Worker] Route already exists (ID: ${newRouteDbId}, Index: ${existingRes.rows[0].route_index}). Reusing.`);
+        // Mark it as AI-recommended so the locations endpoint returns the correct URL.
+        await pool.query('UPDATE routes SET is_ai_recommended = TRUE WHERE id = $1', [newRouteDbId]);
     } else {
         // Determine next route letter (A, B, C...)
         const countRes = await pool.query('SELECT COUNT(*) AS cnt FROM routes WHERE trip_id = $1', [trip.id]);

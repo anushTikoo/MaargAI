@@ -53,7 +53,7 @@ export function decodePolyline(encodedPolyline) {
     return path;
 }
 
-function getDistance(p1, p2) {
+export function calculateDistanceMeters(p1, p2) {
     const R = 6371000; // Earth radius in meters
     const dLat = (p2.lat - p1.lat) * Math.PI / 180;
     const dLon = (p2.lng - p1.lng) * Math.PI / 180;
@@ -75,7 +75,7 @@ export function segmentRoute(decodedPoints, targetKm = 15) {
     for (let i = 0; i < decodedPoints.length - 1; i++) {
         const p1 = decodedPoints[i];
         const p2 = decodedPoints[i + 1];
-        const dist = getDistance(p1, p2);
+        const dist = calculateDistanceMeters(p1, p2);
 
         if (currentSegment.length === 0) {
             currentSegment.push(p1);
@@ -141,4 +141,30 @@ export function encodePolyline(points) {
     }
 
     return result;
+}
+
+/**
+ * Checks if a coordinate is within a threshold distance of any point on a polyline.
+ * @returns {Object} { isNear, minDistance, nearestIndex }
+ */
+export function getDistanceToPolyline(lat, lng, polylineStr) {
+    const points = decodePolyline(polylineStr);
+    if (!points || points.length === 0) return { isNear: false, minDistance: Infinity, nearestIndex: -1 };
+
+    let minDistance = Infinity;
+    let nearestIndex = -1;
+
+    for (let i = 0; i < points.length; i++) {
+        const d = calculateDistanceMeters({ lat, lng }, points[i]);
+        if (d < minDistance) {
+            minDistance = d;
+            nearestIndex = i;
+        }
+    }
+
+    return {
+        isNear: minDistance <= 500, // 500 meters threshold
+        minDistance,
+        nearestIndex
+    };
 }

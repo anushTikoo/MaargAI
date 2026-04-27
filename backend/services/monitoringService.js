@@ -2,7 +2,7 @@ import pool from '../db.js';
 import { evaluateTripAnomaly } from './geminiService.js';
 import { getRoutes } from './routesService.js';
 import { getRouteFromCache } from './agentTools.js';
-import { decodePolyline, encodePolyline, segmentRoute } from './segmentationService.js';
+import { decodePolyline, encodePolyline, segmentRoute, getDistanceToPolyline, calculateDistanceMeters } from './segmentationService.js';
 import { fetchSegmentTrafficDurations } from './trafficService.js';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -79,13 +79,28 @@ async function processSingleTrip(trip) {
         // This measures the 'Truth' of traffic regardless of which route we chose.
         const fastestRouteEtaSeconds = routes[0].durationSeconds;
 
-        // For DISPLAY purposes, we want to show the ETA of the SPECIFIC route the AI chose.
-        // We look for a route in Google's results that matches our current polyline.
-        // Note: Google might return a slightly different polyline starting from the live
-        // position, so we fallback to routes[0] if no match is found.
-        let matchedRoute = routes.find(r => r.polyline === trip.polyline);
+        // ── Step 1.1: Match selecting route intelligently ─────────────────────
+        // We check if the truck is actually on the assigned route.
+        const pathAnalysis = getDistanceToPolyline(currentLat, currentLng, trip.polyline);
+        const isDeviated = !pathAnalysis.isNear;
+
+        // If on path, find the Google route that most closely matches the original.
+        // We compare the total distance of the new route vs the "remaining" distance on the old path.
+        let matchedRoute = null;
+        if (!isDeviated) {
+            const points = decodePolyline(trip.polyline);
+            const remainingPoints = points.slice(pathAnalysis.nearestIndex);
+            
+            // Simple match: does Google return any route that's similar in distance to our remaining path?
+            // (Google's fastest route from a point ON the path usually follows the path)
+            matchedRoute = routes.find(r => {
+                // If the new route distance is within 10% of our remaining polyline distance (min 500m tolerance), it's likely a match
+                const expectedRemainingMeters = remainingPoints.reduce((sum, p, i) => i === 0 ? 0 : sum + calculateDistanceMeters(remainingPoints[i-1], remainingPoints[i]), 0);
+                const tolerance = Math.max(500, expectedRemainingMeters * 0.15);
+                return Math.abs(r.distanceMeters - expectedRemainingMeters) < tolerance;
+            });
+        }
         
-        // If no exact match, we still use the best available live data.
         const selectedRouteLive = matchedRoute || routes[0];
         
         const liveEtaSeconds = selectedRouteLive.durationSeconds;
@@ -132,7 +147,7 @@ async function processSingleTrip(trip) {
         // ── Step 4: PROACTIVE TRIGGER ENGINE ─────────────────────────────────
 
         const triggerResult = await evaluateTriggers(
-            trip, delayMinutes, liveSlackTimeHours, liveEtaSeconds, liveDistanceMeters, currentLat, currentLng
+            trip, delayMinutes, liveSlackTimeHours, liveEtaSeconds, liveDistanceMeters, currentLat, currentLng, isDeviated
         );
 
         if (triggerResult.shouldCallAI) {
@@ -162,7 +177,7 @@ async function processSingleTrip(trip) {
  * No weather API is called here — weather is handled inside the Gemini Agent's
  * analyze_route_segments tool during the deep investigation.
  */
-async function evaluateTriggers(trip, delayMinutes, liveSlackTimeHours, liveEtaSeconds, liveDistanceMeters, currentLat, currentLng) {
+async function evaluateTriggers(trip, delayMinutes, liveSlackTimeHours, liveEtaSeconds, liveDistanceMeters, currentLat, currentLng, isDeviated) {
     // ── Trigger 1: Significant delay (dynamic threshold based on slack) ───────
     const delayThreshold = computeDelayThreshold(liveSlackTimeHours, trip.deadline_timestamp);
 
@@ -196,7 +211,13 @@ async function evaluateTriggers(trip, delayMinutes, liveSlackTimeHours, liveEtaS
         console.warn(`[Worker] Lightweight reliability check failed for trip ${trip.id}: ${err.message}`);
     }
 
-    // ── Trigger 3: Periodic opportunity scan ─────────────────────────────────
+    // ── Trigger 3: Deviation ────────────────────────────────────────────────
+    if (isDeviated) {
+        console.log(`[Worker] ⚠️  TRIGGER 3 (Deviation) fired for Trip ${trip.id}: Truck is >500m off the assigned route.`);
+        return { shouldCallAI: true, reason: 'deviation', currentReliability };
+    }
+
+    // ── Trigger 4: Periodic opportunity scan ─────────────────────────────────
     // When last_ai_trigger_at is null (AI never called), fall back to created_at.
     // This prevents Trigger 3 from firing immediately on brand-new trips.
     const lastAICallAt = trip.last_ai_trigger_at
@@ -205,7 +226,7 @@ async function evaluateTriggers(trip, delayMinutes, liveSlackTimeHours, liveEtaS
     const minutesSinceLastAI = (Date.now() - lastAICallAt.getTime()) / 60000;
 
     if (minutesSinceLastAI > OPPORTUNITY_CHECK_INTERVAL_MIN) {
-        console.log(`[Worker] 🔭 TRIGGER 3 (Opportunity) fired for Trip ${trip.id}: ${Math.floor(minutesSinceLastAI)}m since last AI call.`);
+        console.log(`[Worker] 🔭 TRIGGER 4 (Opportunity) fired for Trip ${trip.id}: ${Math.floor(minutesSinceLastAI)}m since last AI call.`);
         return { shouldCallAI: true, reason: 'opportunity', currentReliability };
     }
 

@@ -707,6 +707,9 @@ export default function Shipments() {
                                                 <p className="text-sm font-semibold text-on-surface break-all">
                                                     {trip.source || `${formatCoordinate(trip.source_lat)}, ${formatCoordinate(trip.source_lng)}`}
                                                 </p>
+                                                <p className="text-[0.65rem] font-mono text-secondary/60 mt-1 uppercase tracking-tight">
+                                                    {formatCoordinate(trip.source_lat)}, {formatCoordinate(trip.source_lng)}
+                                                </p>
                                             </div>
 
                                             <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low px-4 py-4">
@@ -716,6 +719,9 @@ export default function Shipments() {
                                                 </div>
                                                 <p className="text-sm font-semibold text-on-surface break-all">
                                                     {trip.destination || `${formatCoordinate(trip.dest_lat)}, ${formatCoordinate(trip.dest_lng)}`}
+                                                </p>
+                                                <p className="text-[0.65rem] font-mono text-secondary/60 mt-1 uppercase tracking-tight">
+                                                    {formatCoordinate(trip.dest_lat)}, {formatCoordinate(trip.dest_lng)}
                                                 </p>
                                             </div>
                                         </div>

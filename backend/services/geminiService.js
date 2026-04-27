@@ -248,7 +248,8 @@ export async function evaluateTripAnomaly(trip, delayMinutes, currentLat, curren
     const triggerContext = {
         delay:       `The worker detected a ${delayMinutes}-minute delay at the current location.`,
         risk_spike:  `The worker detected a significant traffic reliability spike on the current route (risk score worsened sharply). There may be emerging congestion ahead.`,
-        opportunity: `This is a periodic proactive scan. There is no active delay — the system is checking whether a better route has become available since the last evaluation.`
+        opportunity: `This is a periodic proactive scan. There is no active delay — the system is checking whether a better route has become available since the last evaluation.`,
+        deviation:   `⚠️ CRITICAL: The truck has DEVIATED from its assigned path (it is currently >500m away from the polyline). You MUST prioritize finding a new route from its current position or merging it back safely.`
     }[triggerReason] || `The worker flagged this trip for re-evaluation (reason: ${triggerReason}).`;
 
     const initialPrompt = `You are an autonomous ReAct (Reasoning and Acting) Agent for logistics route optimization.

@@ -288,6 +288,12 @@ export default function Overview() {
     const [mapError, setMapError] = useState('');
     const [isMapReady, setIsMapReady] = useState(false);
     const [hasInitialFit, setHasInitialFit] = useState(false);
+    const [notification, setNotification] = useState(null);
+
+    const showNotification = (message) => {
+        setNotification(message);
+        setTimeout(() => setNotification(null), 3000);
+    };
 
     useEffect(() => {
         let isDisposed = false;
@@ -541,6 +547,23 @@ export default function Overview() {
                         tripInfoWindowRef.current?.close();
                     })
                 );
+
+                routeListeners.push(
+                    routeHitArea.addListener('click', (event) => {
+                        if (event?.latLng) {
+                            const lat = event.latLng.lat();
+                            const lng = event.latLng.lng();
+                            const coordStr = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+                            navigator.clipboard.writeText(coordStr)
+                                .then(() => {
+                                    showNotification(`Copied: ${coordStr}`);
+                                })
+                                .catch(err => {
+                                    console.error('Failed to copy coordinates:', err);
+                                });
+                        }
+                    })
+                );
             }
 
             const truckListeners = [
@@ -625,6 +648,13 @@ export default function Overview() {
                         <p className="text-sm font-medium">{mapError}</p>
                     </div>
                 ) : null}
+
+                {notification && (
+                    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-on-surface text-surface px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 animate-in fade-in zoom-in slide-in-from-top-4 duration-300">
+                        <span className="material-symbols-outlined text-primary text-[1.2rem]">content_copy</span>
+                        <span className="text-sm font-bold tracking-wide">{notification}</span>
+                    </div>
+                )}
             </div>
         </section>
     );

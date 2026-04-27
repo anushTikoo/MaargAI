@@ -657,7 +657,17 @@ export default function Shipments() {
 
                                             {trip.status !== 'not started' && (
                                                 <div className="rounded-xl border border-outline-variant/20 bg-surface-container-low px-4 py-3 min-w-44 flex flex-col justify-center">
-                                                    {trip.status === 'active' && !trip.ai_decision ? (
+                                                    {trip.status === 'completed' ? (
+                                                        <div className="flex flex-col items-center justify-center text-center">
+                                                            <div className="flex items-center gap-2 text-green-600 font-bold mb-1">
+                                                                <span className="material-symbols-outlined text-[1.2rem]">check_circle</span>
+                                                                Delivered
+                                                            </div>
+                                                            <p className="text-[10px] text-secondary leading-tight uppercase tracking-wider font-semibold">
+                                                                Reached Destination
+                                                            </p>
+                                                        </div>
+                                                    ) : trip.status === 'active' && !trip.ai_decision ? (
                                                         <div className="flex flex-col items-center justify-center text-center">
                                                             <div className="flex items-center gap-2 text-primary font-bold animate-pulse mb-1">
                                                                 <span className="material-symbols-outlined text-[1.2rem] animate-spin" style={{ animationDuration: '3s' }}>data_usage</span>

@@ -9,6 +9,7 @@ import { getAIRouteRecommendation } from '../services/geminiService.js';
 
 const router = express.Router();
 const START_TRIP_RADIUS_METERS = 250;
+const COMPLETE_TRIP_RADIUS_METERS = 250;
 
 function toRadians(value) {
     return (value * Math.PI) / 180;
@@ -878,6 +879,26 @@ router.post('/locations', async (req, res) => {
                     console.error(`[Enrichment] Failed for trip ${tripId}:`, err.message)
                 );
             }
+        }
+
+        const distanceToDestMeters = Number.isFinite(destLat) && Number.isFinite(destLng)
+            ? calculateDistanceMeters(parsedLat, parsedLng, destLat, destLng)
+            : null;
+
+        if (
+            nextTripStatus === 'active' &&
+            Number.isFinite(distanceToDestMeters) &&
+            distanceToDestMeters <= COMPLETE_TRIP_RADIUS_METERS
+        ) {
+            await pool.query(
+                `UPDATE trips SET status = 'completed' WHERE id = $1`,
+                [tripId]
+            );
+            nextTripStatus = 'completed';
+            console.log(`[Trip] Completed trip ${tripId} (reached destination).`);
+            
+            // Cleanup Firebase live tracking for completed trip
+            await realtimeDB.ref(`fleet_managers/${fleetManagerId}/${tripId}`).remove();
         }
 
         const locationResult = await pool.query(

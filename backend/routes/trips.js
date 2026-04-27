@@ -62,7 +62,10 @@ router.get('/', async (req, res) => {
                 r.ai_risk_level AS current_route_ai_risk_level,
                 t.live_eta_seconds,
                 t.live_distance_meters,
-                t.live_slack_time_hours
+                t.live_slack_time_hours,
+                t.last_location_at,
+                t.last_ai_trigger_at,
+                t.last_checked_at
             FROM trips t
             JOIN trucks tr ON tr.id = t.truck_id
             LEFT JOIN routes r ON r.id = t.current_route_id
@@ -855,7 +858,7 @@ router.post('/locations', async (req, res) => {
 
         // Fix: Update the main trips table so the worker loop has the latest GPS
         await pool.query(
-            `UPDATE trips SET last_gps_lat = $1, last_gps_lng = $2 WHERE id = $3`,
+            `UPDATE trips SET last_gps_lat = $1, last_gps_lng = $2, last_location_at = CURRENT_TIMESTAMP WHERE id = $3`,
             [parsedLat, parsedLng, tripId]
         );
 

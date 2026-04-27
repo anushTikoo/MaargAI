@@ -69,6 +69,8 @@ CREATE TABLE trips (
     live_eta_seconds INT,
     live_slack_time_hours NUMERIC(10,2),
     live_distance_meters INT,
+    last_location_at TIMESTAMP,
+    last_ai_trigger_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT chk_trip_status

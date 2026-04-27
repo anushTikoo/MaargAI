@@ -147,7 +147,13 @@ function formatArrivalTime(value) {
         return 'N/A';
     }
     const arrivalDate = new Date(Date.now() + totalSeconds * 1000);
-    return arrivalDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return arrivalDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function formatTime24h(dateString) {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 }
 
 function getValidTimestamp(value) {
@@ -739,7 +745,7 @@ export default function Shipments() {
                                                                 Slack: {trip.current_route_ai_slack_time_hours}h
                                                             </span>
                                                         )}
-                                                        {trip.current_route_ai_risk_level && (
+                                                        {trip.current_route_ai_risk_level && trip.current_route_ai_risk_level !== 'low' && (
                                                             <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold border uppercase tracking-wider ${
                                                                 trip.current_route_ai_risk_level === 'high' 
                                                                     ? 'bg-red-50 text-red-700 border-red-200' 
@@ -820,6 +826,70 @@ export default function Shipments() {
                                                         </div>
                                                     </div>
                                                 )}
+                                            </div>
+                                        )}
+
+                                        {trip.status === 'active' && (
+                                            <div className="mt-6 pt-6 border-t border-outline-variant/10">
+                                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                                                    <div className="flex flex-col gap-3">
+                                                        <div className="flex items-center gap-2 text-secondary">
+                                                            <span className="material-symbols-outlined text-[1rem]">sensors</span>
+                                                            <span className="text-[0.65rem] font-black uppercase tracking-[0.15em]">Live Telemetry</span>
+                                                        </div>
+                                                        <div className="flex flex-wrap gap-4">
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[10px] text-secondary font-bold uppercase tracking-wider">Last Update</span>
+                                                                <span className="text-sm font-black text-on-surface">{formatTime24h(trip.last_location_at)}</span>
+                                                            </div>
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[10px] text-secondary font-bold uppercase tracking-wider">Coordinates</span>
+                                                                <span className="text-sm font-bold text-primary font-mono">
+                                                                    {trip.last_gps_lat?.toFixed(5)}, {trip.last_gps_lng?.toFixed(5)}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="flex flex-col gap-3 bg-surface-container-low/50 rounded-xl p-4 border border-outline-variant/10 min-w-[280px]">
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <div className="flex items-center gap-2 text-secondary">
+                                                                <span className="material-symbols-outlined text-[1rem]">engineering</span>
+                                                                <span className="text-[0.65rem] font-black uppercase tracking-[0.15em]">Worker Node</span>
+                                                            </div>
+                                                            <div className="flex items-center gap-1">
+                                                                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+                                                                <span className="text-[10px] font-bold text-green-700 uppercase">Active</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex flex-wrap gap-x-6 gap-y-2">
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[10px] text-secondary font-bold uppercase tracking-wider">Last Run</span>
+                                                                <span className="text-xs font-black text-on-surface">{formatTime24h(trip.last_checked_at)}</span>
+                                                            </div>
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[10px] text-secondary font-bold uppercase tracking-wider">ETA Sync</span>
+                                                                <span className="text-xs font-bold text-green-600 flex items-center gap-1">
+                                                                    <span className="material-symbols-outlined text-[0.9rem]">check_circle</span>
+                                                                    Updated
+                                                                </span>
+                                                            </div>
+                                                            <div className="flex flex-col">
+                                                                <span className="text-[10px] text-secondary font-bold uppercase tracking-wider">Gemini Hook</span>
+                                                                {trip.last_ai_trigger_at && Math.abs(new Date(trip.last_ai_trigger_at) - new Date(trip.last_checked_at)) < 10000 ? (
+                                                                    <span className="text-xs font-bold text-primary flex items-center gap-1">
+                                                                        <span className="material-symbols-outlined text-[0.9rem] animate-pulse">bolt</span>
+                                                                        Triggered
+                                                                    </span>
+                                                                ) : (
+                                                                    <span className="text-xs font-bold text-secondary opacity-50 italic">
+                                                                        Idle
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
                                             </div>
                                         )}
                                     </div>

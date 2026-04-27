@@ -229,7 +229,7 @@ function buildTripInfoHtml(trip) {
                     <div style="background: ${Number(trip.route.ai_slack_time_hours) < 0 ? '#fef2f2' : Number(trip.route.ai_slack_time_hours) < 0.5 ? '#fffbeb' : '#f0fdf4'}; border: 1px solid ${Number(trip.route.ai_slack_time_hours) < 0 ? '#fecaca' : Number(trip.route.ai_slack_time_hours) < 0.5 ? '#fde68a' : '#bbf7d0'}; color: ${Number(trip.route.ai_slack_time_hours) < 0 ? '#b91c1c' : Number(trip.route.ai_slack_time_hours) < 0.5 ? '#b45309' : '#15803d'}; padding: 2px 6px; border-radius: 12px; font-size: 9px; font-weight: 700;">
                         Slack: ${trip.route.ai_slack_time_hours}h
                     </div>` : ''}
-                    ${trip.route.ai_risk_level ? `
+                    ${trip.route.ai_risk_level && trip.route.ai_risk_level !== 'low' ? `
                     <div style="background: ${trip.route.ai_risk_level === 'high' ? '#fef2f2' : trip.route.ai_risk_level === 'medium' ? '#fffbeb' : '#f0fdf4'}; border: 1px solid ${trip.route.ai_risk_level === 'high' ? '#fecaca' : trip.route.ai_risk_level === 'medium' ? '#fde68a' : '#bbf7d0'}; color: ${trip.route.ai_risk_level === 'high' ? '#b91c1c' : trip.route.ai_risk_level === 'medium' ? '#b45309' : '#15803d'}; padding: 2px 6px; border-radius: 12px; font-size: 9px; font-weight: 700; text-transform: uppercase;">
                         ${trip.route.ai_risk_level} Risk
                     </div>` : ''}

@@ -130,6 +130,9 @@ async function processSingleTrip(trip) {
 
             const decision = await evaluateTripAnomaly(trip, delayMinutes, currentLat, currentLng, currentRouteStats);
 
+            // Update last_ai_trigger_at so UI knows Gemini was just called
+            await pool.query('UPDATE trips SET last_ai_trigger_at = CURRENT_TIMESTAMP WHERE id = $1', [trip.id]);
+
             // Format reasoning: Ensure it's a string and add a timestamp so the user sees it's fresh
             const freshReasoning = (Array.isArray(decision.reasoning) ? decision.reasoning.join(' ') : (decision.reasoning || ''))
                 + `\n\n(Last Evaluated: ${new Date().toLocaleTimeString()})`;

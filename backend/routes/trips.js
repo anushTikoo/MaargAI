@@ -908,10 +908,9 @@ router.post('/locations', async (req, res) => {
                 }
             }
 
-            // Either the initial route was just assigned, or the AI rerouted.
             // Added travelmode=driving and dir_action=navigate to ensure the phone app opens in turn-by-turn mode.
             googleMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${parsedLat},${parsedLng}&destination=${destLat},${destLng}${waypointsStr}&travelmode=driving&dir_action=navigate`;
-            
+
             await pool.query(
                 `UPDATE trips SET last_notified_route_id = $1 WHERE id = $2`,
                 [currentRouteId, tripId]

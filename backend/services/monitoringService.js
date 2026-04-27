@@ -144,7 +144,18 @@ async function processSingleTrip(trip) {
                 let newRouteDbId = trip.current_route_id; // Default fallback
 
                 if (cachedRoute) {
-                    console.log(`[Worker] Saving Agent Ad-Hoc Route to Database...`);
+                    console.log(`[Worker] Checking if Agent Route already exists in Database...`);
+
+                    const existingRouteRes = await pool.query(
+                        'SELECT id, route_index FROM routes WHERE trip_id = $1 AND polyline = $2 LIMIT 1',
+                        [trip.id, cachedRoute.polyline]
+                    );
+
+                    if (existingRouteRes.rowCount > 0) {
+                        newRouteDbId = existingRouteRes.rows[0].id;
+                        console.log(`[Worker] Agent Route already exists (ID: ${newRouteDbId}, Index: ${existingRouteRes.rows[0].route_index}). Reusing.`);
+                    } else {
+                        console.log(`[Worker] Saving Agent Ad-Hoc Route to Database...`);
 
                     // Find the next route_index letter for this trip (A, B, C...)
                     const idxRes = await pool.query(
@@ -175,8 +186,9 @@ async function processSingleTrip(trip) {
                         totalCost
                     ]);
 
-                    newRouteDbId = insertRes.rows[0].id;
-                    console.log(`[Worker] Saved new route as ID: ${newRouteDbId} (Index ${nextIndex})`);
+                        newRouteDbId = insertRes.rows[0].id;
+                        console.log(`[Worker] Saved new route as ID: ${newRouteDbId} (Index ${nextIndex})`);
+                    }
                 } else {
                     console.warn(`[Worker] Route ${decision.new_route_id} not found in cache. Cannot save geometry!`);
                 }

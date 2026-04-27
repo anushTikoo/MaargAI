@@ -876,16 +876,9 @@ export default function Shipments() {
                                                             </div>
                                                             <div className="flex flex-col">
                                                                 <span className="text-[10px] text-secondary font-bold uppercase tracking-wider">AI Evaluation</span>
-                                                                {trip.last_ai_trigger_at && Math.abs(new Date(trip.last_ai_trigger_at) - new Date(trip.last_checked_at)) < 10000 ? (
-                                                                    <span className="text-xs font-bold text-primary flex items-center gap-1">
-                                                                        <span className="material-symbols-outlined text-[0.9rem] animate-pulse">bolt</span>
-                                                                        Called
-                                                                    </span>
-                                                                ) : (
-                                                                    <span className="text-xs font-bold text-secondary opacity-50">
-                                                                        Not Required
-                                                                    </span>
-                                                                )}
+                                                                <span className="text-xs font-black text-on-surface">
+                                                                    {trip.last_ai_trigger_at ? formatTime24h(trip.last_ai_trigger_at) : 'Not Evaluated'}
+                                                                </span>
                                                             </div>
                                                         </div>
                                                     </div>

@@ -2,7 +2,7 @@ import express from 'express';
 import pool from '../db.js';
 import { getRoutes } from '../services/routesService.js';
 import realtimeDB from '../services/firebase.js';
-import { decodePolyline, segmentRoute } from '../services/segmentationService.js';
+import { decodePolyline, segmentRoute, getDistanceToPolyline } from '../services/segmentationService.js';
 import { fetchSegmentTrafficDurations } from '../services/trafficService.js';
 import { fetchSegmentWeatherScores } from '../services/weatherService.js';
 import { getAIRouteRecommendation } from '../services/geminiService.js';
@@ -915,10 +915,19 @@ router.post('/locations', async (req, res) => {
         );
 
         let googleMapsUrl = null;
-        // Only generate a navigation URL when the current route was explicitly recommended by AI.
-        // If the route is not AI-recommended (e.g. still on baseline Route A), return null.
-        const isAiRecommended = !!tripResult.rows[0].is_ai_recommended;
-        if (currentRouteId && isAiRecommended) {
+        let isActuallyOptimized = !!tripResult.rows[0].is_ai_recommended;
+
+        // NEW: Instant Deviation Check. 
+        // If the truck is >500m away from the assigned polyline, it's not "AI Optimized" anymore.
+        if (currentRouteId && tripResult.rows[0].polyline) {
+            const pathCheck = getDistanceToPolyline(parsedLat, parsedLng, tripResult.rows[0].polyline);
+            if (!pathCheck.isNear) {
+                isActuallyOptimized = false;
+            }
+        }
+
+        // Only generate a navigation URL when the route is AI-recommended AND we are actually on it.
+        if (currentRouteId && isActuallyOptimized) {
             let waypointsStr = '';
             const polyline = tripResult.rows[0].polyline;
             if (polyline) {
@@ -991,7 +1000,7 @@ router.post('/locations', async (req, res) => {
                 ai_recommendation: {
                     has_recommendation: !!tripResult.rows[0].ai_reroute_reason,
                     reasoning: tripResult.rows[0].ai_reroute_reason || null,
-                    is_ai_optimized: !!tripResult.rows[0].is_ai_recommended,
+                    is_ai_optimized: isActuallyOptimized,
                     google_maps_url: googleMapsUrl
                 }
             },

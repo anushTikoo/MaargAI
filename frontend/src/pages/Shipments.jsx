@@ -674,12 +674,12 @@ export default function Shipments() {
                                                                 <div className="flex items-end gap-2">
                                                                     <span className="material-symbols-outlined text-primary text-[1.15rem]">schedule</span>
                                                                     <span className="text-2xl font-black text-on-surface leading-none">
-                                                                        {formatArrivalTime(trip.live_eta_seconds || trip.current_route_duration_seconds || trip.baseline_eta_seconds)}
+                                                                        {formatArrivalTime(trip.live_eta_seconds || trip.route?.duration_seconds || trip.baseline_eta_seconds || 0)}
                                                                     </span>
                                                                 </div>
                                                                 <div className="flex items-center gap-1.5 text-[0.65rem] text-secondary font-bold uppercase tracking-wider ml-1">
                                                                     <span className="material-symbols-outlined text-[0.85rem]">timer</span>
-                                                                    {formatEtaSeconds(trip.live_eta_seconds || trip.current_route_duration_seconds || trip.baseline_eta_seconds).replace(/ \d+s$/, '').replace(/^\d+s$/, '< 1m')} remaining
+                                                                    {formatEtaSeconds(trip.live_eta_seconds || trip.route?.duration_seconds || trip.baseline_eta_seconds || 0).replace(/ \d+s$/, '').replace(/^\d+s$/, '< 1m')} remaining
                                                                 </div>
                                                             </div>
                                                         </>

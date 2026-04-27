@@ -75,14 +75,21 @@ async function processSingleTrip(trip) {
             return;
         }
 
-        // Use Google's Routes API response (from truck's current position → destination) for all
-        // live metrics. routes[0] is Google's fastest current route — it gives accurate,
-        // real-time ETA and distance that only change when the truck actually moves.
-        // NOTE: The AI-chosen route's static duration/distance is preserved in routes.duration_seconds
-        // and routes.distance_meters (joined via current_route_id) and shown separately in the UI.
+        // Always use Google's fastest current route for internal DELAY DETECTION.
+        // This measures the 'Truth' of traffic regardless of which route we chose.
         const fastestRouteEtaSeconds = routes[0].durationSeconds;
-        const liveEtaSeconds = routes[0].durationSeconds;
-        const liveDistanceMeters = routes[0].distanceMeters;
+
+        // For DISPLAY purposes, we want to show the ETA of the SPECIFIC route the AI chose.
+        // We look for a route in Google's results that matches our current polyline.
+        // Note: Google might return a slightly different polyline starting from the live
+        // position, so we fallback to routes[0] if no match is found.
+        let matchedRoute = routes.find(r => r.polyline === trip.polyline);
+        
+        // If no exact match, we still use the best available live data.
+        const selectedRouteLive = matchedRoute || routes[0];
+        
+        const liveEtaSeconds = selectedRouteLive.durationSeconds;
+        const liveDistanceMeters = selectedRouteLive.distanceMeters;
 
         // ── Step 2: Calculate delay & slack ──────────────────────────────────
         // Delay = current Google ETA − how much time was still budgeted at this moment.

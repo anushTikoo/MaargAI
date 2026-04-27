@@ -210,14 +210,14 @@ function buildTripInfoHtml(trip, hoverCoords = null) {
                 <div style="margin-top: 4px; padding-top: 8px; border-top: 1px dashed #eee; display: flex; flex-direction: column; gap: 4px;">
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <div style="font-size: 11px; font-weight: 700; color: #aa3000;">
-                            ${escapeHtml(formatDistanceMeters(trip.live_distance_meters || trip?.route?.distance_meters))}
+                            ${escapeHtml(formatDistanceMeters(trip.live_distance_meters || trip.route?.distance_meters || 0))}
                         </div>
                         <div style="font-size: 11px; font-weight: 800; color: #1a1c1e;">
-                            Arrival: ${escapeHtml(formatArrivalTime(trip.live_eta_seconds || trip?.route?.duration_seconds))}
+                            Arrival: ${escapeHtml(formatArrivalTime(trip.live_eta_seconds || trip.route?.duration_seconds || 0))}
                         </div>
                     </div>
                     <div style="font-size: 10px; font-weight: 500; color: #6b7280; text-align: right;">
-                        ${escapeHtml(formatDuration(trip.live_eta_seconds || trip?.route?.duration_seconds))} remaining
+                        ${escapeHtml(formatDuration(trip.live_eta_seconds || trip.route?.duration_seconds || 0))} remaining
                     </div>
                 </div>
                 ${trip?.route?.is_ai_recommended ? `
@@ -387,7 +387,7 @@ export default function Overview() {
 
         const tripsWithLiveLocations = activeTrips.filter((trip) => {
             const location = trip?.live_location;
-            return trip?.route?.is_ai_recommended && isValidCoordinate(Number(location?.lat), Number(location?.lng));
+            return isValidCoordinate(Number(location?.lat), Number(location?.lng));
         });
 
         if (tripsWithLiveLocations.length === 0) {

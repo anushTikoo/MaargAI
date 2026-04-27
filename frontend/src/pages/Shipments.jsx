@@ -875,15 +875,15 @@ export default function Shipments() {
                                                                 </span>
                                                             </div>
                                                             <div className="flex flex-col">
-                                                                <span className="text-[10px] text-secondary font-bold uppercase tracking-wider">Gemini Hook</span>
+                                                                <span className="text-[10px] text-secondary font-bold uppercase tracking-wider">AI Evaluation</span>
                                                                 {trip.last_ai_trigger_at && Math.abs(new Date(trip.last_ai_trigger_at) - new Date(trip.last_checked_at)) < 10000 ? (
                                                                     <span className="text-xs font-bold text-primary flex items-center gap-1">
                                                                         <span className="material-symbols-outlined text-[0.9rem] animate-pulse">bolt</span>
-                                                                        Triggered
+                                                                        Called
                                                                     </span>
                                                                 ) : (
-                                                                    <span className="text-xs font-bold text-secondary opacity-50 italic">
-                                                                        Idle
+                                                                    <span className="text-xs font-bold text-secondary opacity-50">
+                                                                        Not Required
                                                                     </span>
                                                                 )}
                                                             </div>

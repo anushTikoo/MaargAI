@@ -43,7 +43,7 @@ function formatArrivalTime(value) {
         return 'N/A';
     }
     const arrivalDate = new Date(Date.now() + totalSeconds * 1000);
-    return arrivalDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return arrivalDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 function formatDistanceMeters(value) {
@@ -210,14 +210,14 @@ function buildTripInfoHtml(trip) {
                 <div style="margin-top: 4px; padding-top: 8px; border-top: 1px dashed #eee; display: flex; flex-direction: column; gap: 4px;">
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <div style="font-size: 11px; font-weight: 700; color: #aa3000;">
-                            ${escapeHtml(formatDistanceMeters(trip?.route?.distance_meters))}
+                            ${escapeHtml(formatDistanceMeters(trip.live_distance_meters || trip?.route?.distance_meters))}
                         </div>
                         <div style="font-size: 11px; font-weight: 800; color: #1a1c1e;">
-                            Arrival: ${escapeHtml(formatArrivalTime(trip?.route?.duration_seconds))}
+                            Arrival: ${escapeHtml(formatArrivalTime(trip.live_eta_seconds || trip?.route?.duration_seconds))}
                         </div>
                     </div>
                     <div style="font-size: 10px; font-weight: 500; color: #6b7280; text-align: right;">
-                        ${escapeHtml(formatDuration(trip?.route?.duration_seconds))} remaining
+                        ${escapeHtml(formatDuration(trip.live_eta_seconds || trip?.route?.duration_seconds))} remaining
                     </div>
                 </div>
                 ${trip?.route?.is_ai_recommended ? `

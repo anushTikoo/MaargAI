@@ -36,7 +36,9 @@ export async function processActiveTrips() {
             FROM trips t
             JOIN trucks tr ON t.truck_id = tr.id
             LEFT JOIN routes r ON t.current_route_id = r.id
-            WHERE t.status = 'active' AND t.current_route_id IS NOT NULL
+            WHERE t.status = 'active'
+              AND t.current_route_id IS NOT NULL
+              AND t.ai_decision IS NOT NULL
         `);
 
         console.log(`[Worker] Found ${trips.length} active trip(s) to process.`);
@@ -73,21 +75,24 @@ async function processSingleTrip(trip) {
             return;
         }
 
-        // Pick the same route index (A=0, B=1, C=2) the truck is assigned to.
-        const routeIdxMap = { A: 0, B: 1, C: 2 };
-        const assignedIdx = routeIdxMap[trip.current_route_index] ?? 0;
-        const bestRoute = routes[assignedIdx] || routes[0];
+        // Always use Google's fastest current route (routes[0]) for live metrics.
+        // Picking by letter-index (A=0, B=1) is unreliable because Google can reorder
+        // routes between calls. routes[0] is consistently the best option from this position.
+        const bestRoute = routes[0];
 
         const liveEtaSeconds     = bestRoute.durationSeconds;
         const liveDistanceMeters = bestRoute.distanceMeters;
 
         // ── Step 2: Calculate delay & slack ──────────────────────────────────
-        const createdAtMs       = new Date(trip.created_at).getTime();
-        const plannedArrivalMs  = createdAtMs + (trip.baseline_eta_seconds * 1000);
-        const predictedArrivalMs = Date.now() + (liveEtaSeconds * 1000);
-        const totalDelaySeconds = Math.floor((predictedArrivalMs - plannedArrivalMs) / 1000);
-        const delayMinutes      = Math.floor(totalDelaySeconds / 60);
+        // Delay = how much longer will the trip take vs how long was STILL expected at this moment.
+        // expectedRemaining decreases as time passes; if liveEta stays high, it means the truck is behind.
+        const createdAtMs             = new Date(trip.created_at).getTime();
+        const secondsElapsed          = Math.floor((Date.now() - createdAtMs) / 1000);
+        const expectedRemainingSeconds = Math.max(0, (trip.baseline_eta_seconds || 0) - secondsElapsed);
+        const totalDelaySeconds        = Math.max(0, liveEtaSeconds - expectedRemainingSeconds);
+        const delayMinutes             = Math.floor(totalDelaySeconds / 60);
 
+        const predictedArrivalMs = Date.now() + (liveEtaSeconds * 1000);
         let liveSlackTimeHours = null;
         if (trip.deadline_timestamp) {
             const deadlineMs = new Date(trip.deadline_timestamp).getTime();
@@ -95,7 +100,7 @@ async function processSingleTrip(trip) {
             liveSlackTimeHours = parseFloat((slackMs / 3600000).toFixed(2));
         }
 
-        console.log(`[Worker] Trip ${trip.id} | Delay: ${delayMinutes}m | Slack: ${liveSlackTimeHours ?? 'N/A'}h`);
+        console.log(`[Worker] Trip ${trip.id} | Elapsed: ${Math.floor(secondsElapsed/60)}m | Expected Remaining: ${Math.floor(expectedRemainingSeconds/60)}m | Live ETA: ${Math.floor(liveEtaSeconds/60)}m | Delay: ${delayMinutes}m | Slack: ${liveSlackTimeHours ?? 'N/A'}h`);
 
         // ── Step 3: Persist checkpoint & live metrics ─────────────────────────
         const riskMap     = { low: 0.1, medium: 0.4, high: 0.8 };
@@ -179,10 +184,12 @@ async function evaluateTriggers(trip, delayMinutes, liveSlackTimeHours, liveEtaS
     }
 
     // ── Trigger 3: Periodic opportunity scan ─────────────────────────────────
-    const lastAICallAt = trip.last_ai_trigger_at ? new Date(trip.last_ai_trigger_at) : null;
-    const minutesSinceLastAI = lastAICallAt
-        ? (Date.now() - lastAICallAt.getTime()) / 60000
-        : Infinity;
+    // When last_ai_trigger_at is null (AI never called), fall back to created_at.
+    // This prevents Trigger 3 from firing immediately on brand-new trips.
+    const lastAICallAt = trip.last_ai_trigger_at
+        ? new Date(trip.last_ai_trigger_at)
+        : new Date(trip.created_at);
+    const minutesSinceLastAI = (Date.now() - lastAICallAt.getTime()) / 60000;
 
     if (minutesSinceLastAI > OPPORTUNITY_CHECK_INTERVAL_MIN) {
         console.log(`[Worker] 🔭 TRIGGER 3 (Opportunity) fired for Trip ${trip.id}: ${Math.floor(minutesSinceLastAI)}m since last AI call.`);

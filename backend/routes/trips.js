@@ -768,7 +768,7 @@ router.post('/locations', async (req, res) => {
         const truckId = truckResult.rows[0].id;
 
         const tripResult = await pool.query(
-            `SELECT t.id, t.fleet_manager_id, t.status, t.source_lat, t.source_lng, t.dest_lat, t.dest_lng, t.current_route_id, t.last_notified_route_id, t.ai_reroute_reason, r.is_ai_recommended, r.polyline
+            `SELECT t.id, t.fleet_manager_id, t.status, t.source_lat, t.source_lng, t.dest_lat, t.dest_lng, t.current_route_id, t.last_notified_route_id, t.ai_reroute_reason, t.ai_decision, r.is_ai_recommended, r.polyline
              FROM trips t
              LEFT JOIN routes r ON t.current_route_id = r.id
              WHERE t.truck_id = $1
@@ -791,6 +791,7 @@ router.post('/locations', async (req, res) => {
         const destLng = Number(tripResult.rows[0].dest_lng);
         let currentRouteId = tripResult.rows[0].current_route_id;
         const lastNotifiedRouteId = tripResult.rows[0].last_notified_route_id;
+        const aiDecision = tripResult.rows[0].ai_decision;
 
         const distanceToSourceMeters = Number.isFinite(sourceLat) && Number.isFinite(sourceLng)
             ? calculateDistanceMeters(parsedLat, parsedLng, sourceLat, sourceLng)
@@ -859,7 +860,9 @@ router.post('/locations', async (req, res) => {
         );
 
         let googleMapsUrl = null;
-        if (currentRouteId && currentRouteId !== lastNotifiedRouteId) {
+        // Only generate the URL if AI has made its initial decision (stay_course or reroute)
+        // and we haven't notified the driver about this specific route ID yet.
+        if (currentRouteId && currentRouteId !== lastNotifiedRouteId && aiDecision) {
             let waypointsStr = '';
             const polyline = tripResult.rows[0].polyline;
             if (polyline) {

@@ -75,24 +75,21 @@ async function processSingleTrip(trip) {
             return;
         }
 
-        // Always use Google's fastest current route for DELAY DETECTION only.
-        // It gives a reliable, order-independent measure of current traffic conditions.
+        // Use Google's Routes API response (from truck's current position → destination) for all
+        // live metrics. routes[0] is Google's fastest current route — it gives accurate,
+        // real-time ETA and distance that only change when the truck actually moves.
+        // NOTE: The AI-chosen route's static duration/distance is preserved in routes.duration_seconds
+        // and routes.distance_meters (joined via current_route_id) and shown separately in the UI.
         const fastestRouteEtaSeconds = routes[0].durationSeconds;
-        // Use the selected route's distance from DB — routes[0].distanceMeters is the shorter
-        // route and would show the wrong value in the UI when AI has chosen a longer path.
-        const liveDistanceMeters = trip.route_distance || routes[0].distanceMeters;
-
-        // For DISPLAY (live_eta_seconds stored in DB + shown in UI) we honour the AI's
-        // chosen route. trip.route_duration is the selected route's full duration from the DB.
-        // Subtracting elapsed time gives the expected remaining time on that specific path.
-        const createdAtMs = new Date(trip.created_at).getTime();
-        const secondsElapsed = Math.floor((Date.now() - createdAtMs) / 1000);
-        const selectedRouteDuration = trip.route_duration || fastestRouteEtaSeconds;
-        const liveEtaSeconds = Math.max(0, selectedRouteDuration - secondsElapsed);
+        const liveEtaSeconds = routes[0].durationSeconds;
+        const liveDistanceMeters = routes[0].distanceMeters;
 
         // ── Step 2: Calculate delay & slack ──────────────────────────────────
-        // Delay uses fastestRouteEtaSeconds (real traffic from current position) vs
-        // how much time was still expected to remain on the selected route.
+        // Delay = current Google ETA − how much time was still budgeted at this moment.
+        // expectedRemaining decreases as real time passes; if liveEta stays high despite
+        // time passing, the truck is genuinely behind schedule.
+        const createdAtMs = new Date(trip.created_at).getTime();
+        const secondsElapsed = Math.floor((Date.now() - createdAtMs) / 1000);
         const expectedRemainingSeconds = Math.max(0, (trip.baseline_eta_seconds || 0) - secondsElapsed);
         const totalDelaySeconds = Math.max(0, fastestRouteEtaSeconds - expectedRemainingSeconds);
         const delayMinutes = Math.floor(totalDelaySeconds / 60);
@@ -105,7 +102,7 @@ async function processSingleTrip(trip) {
             liveSlackTimeHours = parseFloat((slackMs / 3600000).toFixed(2));
         }
 
-        console.log(`[Worker] Trip ${trip.id} | Elapsed: ${Math.floor(secondsElapsed / 60)}m | Expected Remaining: ${Math.floor(expectedRemainingSeconds / 60)}m | Fastest ETA: ${Math.floor(fastestRouteEtaSeconds / 60)}m | Display ETA: ${Math.floor(liveEtaSeconds / 60)}m | Delay: ${delayMinutes}m | Slack: ${liveSlackTimeHours ?? 'N/A'}h`);
+        console.log(`[Worker] Trip ${trip.id} | Elapsed: ${Math.floor(secondsElapsed / 60)}m | Expected Remaining: ${Math.floor(expectedRemainingSeconds / 60)}m | Live ETA (Google): ${Math.floor(liveEtaSeconds / 60)}m | Delay: ${delayMinutes}m | Slack: ${liveSlackTimeHours ?? 'N/A'}h`);
 
         // ── Step 3: Persist checkpoint & live metrics ─────────────────────────
         const riskMap = { low: 0.1, medium: 0.4, high: 0.8 };
@@ -290,6 +287,7 @@ async function runAIEvaluation(trip, delayMinutes, currentLat, currentLng, liveE
         ai_risk_level: 'medium',
         deadline_timestamp: trip.deadline_timestamp,
         current_slack_hours: liveSlackTimeHours,
+        trigger_reason: triggerReason,
         polyline: trip.polyline
     };
 
@@ -305,11 +303,9 @@ async function runAIEvaluation(trip, delayMinutes, currentLat, currentLng, liveE
     `, [triggerReason, trip.id]);
 
     // Build fresh reasoning string
-    const freshReasoning = (
-        Array.isArray(decision.reasoning)
-            ? decision.reasoning.join(' ')
-            : (decision.reasoning || '')
-    ) + `\n\n(Last Evaluated: ${new Date().toLocaleTimeString()})`;
+    const freshReasoning = Array.isArray(decision.reasoning)
+        ? decision.reasoning.join(' ')
+        : (decision.reasoning || '');
 
     if (decision.action === 'reroute' && decision.new_route_id) {
         await handleReroute(trip, decision, freshReasoning, currentLat, currentLng);

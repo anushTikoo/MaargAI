@@ -230,37 +230,70 @@ export async function evaluateTripAnomaly(trip, delayMinutes, currentLat, curren
 
     const chat = ai.chats.create({
         model: 'gemini-2.5-flash',
-        config: { 
+        config: {
             tools: toolsList,
             temperature: 0.1 // Keep it deterministic
         }
     });
 
-    const initialPrompt = `You are an autonomous ReAct (Reasoning and Acting) Agent for logistics.
-Trip #${trip.id} is experiencing a severe delay of ${delayMinutes} minutes at location [${currentLat}, ${currentLng}].
-The destination is [${trip.dest_lat}, ${trip.dest_lng}].
-Delivery Deadline: ${currentRoute.deadline_timestamp || 'No hard deadline'}
-Current Calculated Slack Time: ${currentRoute.current_slack_hours} hours (Buffer before late arrival).
-Current Remaining Distance: ${currentRoute.distance_meters} meters.
+    const slackHours = currentRoute.current_slack_hours ?? null;
+    const slackLabel = slackHours === null
+        ? 'unknown'
+        : slackHours < 0 ? `OVERDUE by ${Math.abs(slackHours).toFixed(1)}h`
+        : slackHours < 0.5 ? `critically tight (${slackHours.toFixed(2)}h remaining)`
+        : slackHours < 3 ? `low (${slackHours.toFixed(2)}h remaining)`
+        : `ample (${slackHours.toFixed(2)}h remaining)`;
+
+    const triggerReason = currentRoute.trigger_reason || 'delay';
+    const triggerContext = {
+        delay:       `The worker detected a ${delayMinutes}-minute delay at the current location.`,
+        risk_spike:  `The worker detected a significant traffic reliability spike on the current route (risk score worsened sharply). There may be emerging congestion ahead.`,
+        opportunity: `This is a periodic proactive scan. There is no active delay — the system is checking whether a better route has become available since the last evaluation.`
+    }[triggerReason] || `The worker flagged this trip for re-evaluation (reason: ${triggerReason}).`;
+
+    const initialPrompt = `You are an autonomous ReAct (Reasoning and Acting) Agent for logistics route optimization.
+
+Trip #${trip.id} has been flagged for re-evaluation.
+Trigger Reason: ${triggerContext}
+
+Current Status:
+- Truck Location: [${currentLat}, ${currentLng}]
+- Destination: [${trip.dest_lat}, ${trip.dest_lng}]
+- Current Delay: ${delayMinutes} minutes
+- Delivery Deadline: ${currentRoute.deadline_timestamp || 'No hard deadline set'}
+- Current Slack Time: ${slackLabel}
+- Remaining Distance: ${(currentRoute.distance_meters / 1000).toFixed(1)} km
+
+DECISION FRAMEWORK — follow these priorities strictly in order:
+
+PRIORITY 1 — DEADLINE SAFETY:
+  - If slack time is NEGATIVE or < 0.25h: Finding a faster route is CRITICAL. Optimise for speed even at higher cost.
+  - If slack time is LOW (0.25h – 3h): A time saving > 20 minutes justifies a cost increase up to ~800 INR.
+  - If slack time is AMPLE (> 3h): The delivery will be on time regardless. DO NOT reroute purely to save a few minutes.
+    In this case, STAY THE COURSE unless an alternative offers BOTH lower cost AND lower risk simultaneously.
+
+PRIORITY 2 — ROUTE STABILITY:
+  - Avoid rerouting if the truck has already been rerouted recently. Frequent route changes are disruptive.
+  - Prefer "stay_course" when the current route is safe and the delay is not threatening the deadline.
+
+PRIORITY 3 — RISK & CONGESTION:
+  - A route with max_delay_ratio > 3.0 indicates gridlock — avoid it.
+  - A route with traffic_density_score > 0.5 indicates widespread congestion — prefer alternatives.
+
+PRIORITY 4 — COST:
+  - Among routes with equivalent safety and timing, prefer the lower total cost (fuel + tolls).
 
 INSTRUCTIONS:
 1. Call "get_alternative_routes" using the current location and destination.
-2. For promising alternatives, call "analyze_route_segments" to check for bottlenecks (max_delay_ratio), overall traffic (avg_delay_ratio), and safety.
-3. PERFORM TRADE-OFF ANALYSIS:
-   - PRIORITY 1: DEADLINE ADHERENCE. If the "Current Calculated Slack Time" is negative or very low (e.g., < 0.25h), finding a faster route is CRITICAL.
-   - Compare the current route's cost (fuel + any toll) and current delay vs alternatives.
-   - A route with "max_delay_ratio" > 3.0 is a severe bottleneck (gridlock).
-   - "traffic_density_score" > 0.5 indicates widespread congestion.
-   - If an alternative saves significant time (e.g. > 15m) but costs 500-1000 INR more, weigh the urgency of the delivery deadline.
-4. IMPORTANT: Check if the "selected_route" is the one labeled as "is_current_route": true. 
-   - If the best route is the current one, you MUST decide to "stay_course".
-   - ONLY decide to "reroute" if you are switching to a DIFFERENT route that is significantly better.
-   - If no good alternatives exist or they are excessively expensive for minimal gain, decide to "stay_course".
+2. For each promising alternative, call "analyze_route_segments" to check traffic and safety metrics.
+3. Apply the Decision Framework above to make your final call.
+4. If the best option is the current route, you MUST decide "stay_course".
+5. Only output "reroute" if you are confident a different route is MATERIALLY better given the current slack context.
 
-When you have enough information, output ONLY a valid JSON decision (no markdown fences) in this exact format:
+Output ONLY valid JSON (no markdown) in this exact format:
 {
   "action": "stay_course" | "reroute",
-  "reasoning": "Detailed explanation. MUST mention specific costs (INR), time savings (minutes), traffic metrics (avg/max delay), and precisely how this affects the DELIVERY DEADLINE and SLACK TIME. IDENTIFY ROUTES BY THEIR DURATION (e.g. 'the 3h 15m route') instead of IDs. If staying on course, explain why alternatives weren't better.",
+  "reasoning": "Detailed explanation referencing specific numbers: costs (INR), time savings (minutes), delay ratios, slack time, and how this affects the deadline. Identify routes by their duration (e.g. 'the 3h 15m route'). If staying, explain why alternatives weren't better.",
   "new_route_id": "<route_id if reroute, else null>"
 }
 `;

@@ -798,12 +798,11 @@ export default function Shipments() {
                                                             )}
                                                         </div>
                                                         <div className="text-sm text-secondary leading-relaxed whitespace-pre-wrap">
-                                                            {expandedReasoningTripIds.has(trip.id) 
-                                                                ? trip.ai_reroute_reason 
-                                                                : (trip.ai_reroute_reason.length > 150 
-                                                                    ? trip.ai_reroute_reason.substring(0, 150) + '...' 
-                                                                    : trip.ai_reroute_reason)
-                                                            }
+                                                            {expandedReasoningTripIds.has(trip.id)
+                                                                ? trip.ai_reroute_reason
+                                                                : (trip.ai_reroute_reason.length > 150
+                                                                    ? trip.ai_reroute_reason.substring(0, 150) + '...'
+                                                                    : trip.ai_reroute_reason)}
                                                             {trip.ai_reroute_reason.length > 150 && (
                                                                 <button
                                                                     onClick={() => {

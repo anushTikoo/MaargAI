@@ -8,13 +8,13 @@ import { fetchSegmentTrafficDurations } from './trafficService.js';
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 /** Dynamic delay thresholds (minutes) based on available slack. */
-const DELAY_THRESHOLD_TIGHT_SLACK  = 10;  // slack < 0.5h
+const DELAY_THRESHOLD_TIGHT_SLACK = 10;  // slack < 0.5h
 const DELAY_THRESHOLD_NORMAL_SLACK = 15;  // slack >= 0.5h or unknown
-const DELAY_THRESHOLD_NO_DEADLINE  = 20;  // no deadline set
+const DELAY_THRESHOLD_NO_DEADLINE = 20;  // no deadline set
 
 /** Trigger 2: minimum absolute reliability score AND minimum delta to fire. */
 const RELIABILITY_SPIKE_ABSOLUTE_MIN = 0.7;  // route must be "Risky+"
-const RELIABILITY_SPIKE_DELTA_MIN    = 0.3;  // must have worsened by this much since last check
+const RELIABILITY_SPIKE_DELTA_MIN = 0.3;  // must have worsened by this much since last check
 
 /** Trigger 3: minimum gap (minutes) since last AI call for an opportunity scan. */
 const OPPORTUNITY_CHECK_INTERVAL_MIN = 30;
@@ -75,35 +75,40 @@ async function processSingleTrip(trip) {
             return;
         }
 
-        // Always use Google's fastest current route (routes[0]) for live metrics.
-        // Picking by letter-index (A=0, B=1) is unreliable because Google can reorder
-        // routes between calls. routes[0] is consistently the best option from this position.
-        const bestRoute = routes[0];
+        // Always use Google's fastest current route for DELAY DETECTION only.
+        // It gives a reliable, order-independent measure of current traffic conditions.
+        const fastestRouteEtaSeconds = routes[0].durationSeconds;
+        // Use the selected route's distance from DB — routes[0].distanceMeters is the shorter
+        // route and would show the wrong value in the UI when AI has chosen a longer path.
+        const liveDistanceMeters = trip.route_distance || routes[0].distanceMeters;
 
-        const liveEtaSeconds     = bestRoute.durationSeconds;
-        const liveDistanceMeters = bestRoute.distanceMeters;
+        // For DISPLAY (live_eta_seconds stored in DB + shown in UI) we honour the AI's
+        // chosen route. trip.route_duration is the selected route's full duration from the DB.
+        // Subtracting elapsed time gives the expected remaining time on that specific path.
+        const createdAtMs = new Date(trip.created_at).getTime();
+        const secondsElapsed = Math.floor((Date.now() - createdAtMs) / 1000);
+        const selectedRouteDuration = trip.route_duration || fastestRouteEtaSeconds;
+        const liveEtaSeconds = Math.max(0, selectedRouteDuration - secondsElapsed);
 
         // ── Step 2: Calculate delay & slack ──────────────────────────────────
-        // Delay = how much longer will the trip take vs how long was STILL expected at this moment.
-        // expectedRemaining decreases as time passes; if liveEta stays high, it means the truck is behind.
-        const createdAtMs             = new Date(trip.created_at).getTime();
-        const secondsElapsed          = Math.floor((Date.now() - createdAtMs) / 1000);
+        // Delay uses fastestRouteEtaSeconds (real traffic from current position) vs
+        // how much time was still expected to remain on the selected route.
         const expectedRemainingSeconds = Math.max(0, (trip.baseline_eta_seconds || 0) - secondsElapsed);
-        const totalDelaySeconds        = Math.max(0, liveEtaSeconds - expectedRemainingSeconds);
-        const delayMinutes             = Math.floor(totalDelaySeconds / 60);
+        const totalDelaySeconds = Math.max(0, fastestRouteEtaSeconds - expectedRemainingSeconds);
+        const delayMinutes = Math.floor(totalDelaySeconds / 60);
 
         const predictedArrivalMs = Date.now() + (liveEtaSeconds * 1000);
         let liveSlackTimeHours = null;
         if (trip.deadline_timestamp) {
             const deadlineMs = new Date(trip.deadline_timestamp).getTime();
-            const slackMs    = deadlineMs - predictedArrivalMs;
+            const slackMs = deadlineMs - predictedArrivalMs;
             liveSlackTimeHours = parseFloat((slackMs / 3600000).toFixed(2));
         }
 
-        console.log(`[Worker] Trip ${trip.id} | Elapsed: ${Math.floor(secondsElapsed/60)}m | Expected Remaining: ${Math.floor(expectedRemainingSeconds/60)}m | Live ETA: ${Math.floor(liveEtaSeconds/60)}m | Delay: ${delayMinutes}m | Slack: ${liveSlackTimeHours ?? 'N/A'}h`);
+        console.log(`[Worker] Trip ${trip.id} | Elapsed: ${Math.floor(secondsElapsed / 60)}m | Expected Remaining: ${Math.floor(expectedRemainingSeconds / 60)}m | Fastest ETA: ${Math.floor(fastestRouteEtaSeconds / 60)}m | Display ETA: ${Math.floor(liveEtaSeconds / 60)}m | Delay: ${delayMinutes}m | Slack: ${liveSlackTimeHours ?? 'N/A'}h`);
 
         // ── Step 3: Persist checkpoint & live metrics ─────────────────────────
-        const riskMap     = { low: 0.1, medium: 0.4, high: 0.8 };
+        const riskMap = { low: 0.1, medium: 0.4, high: 0.8 };
         const numericalRisk = riskMap[trip.ai_risk_level] || 0.0;
 
         await pool.query(`
@@ -222,16 +227,16 @@ async function computeLightweightReliability(polyline, distanceMeters) {
     if (points.length < 2) return null;
 
     // Dynamic segment size (same formula as in agentTools)
-    const totalDistKm    = distanceMeters / 1000;
-    const segmentSizeKm  = Math.max(8, Math.min(20, totalDistKm * 0.1));
-    const allSegments    = segmentRoute(points, segmentSizeKm);
+    const totalDistKm = distanceMeters / 1000;
+    const segmentSizeKm = Math.max(8, Math.min(20, totalDistKm * 0.1));
+    const allSegments = segmentRoute(points, segmentSizeKm);
 
     if (allSegments.length === 0) return null;
 
     // Sample up to 3 evenly-spaced segments for a fast check
     const maxSamples = 3;
-    const step       = Math.max(1, Math.ceil(allSegments.length / maxSamples));
-    const sample     = [];
+    const step = Math.max(1, Math.ceil(allSegments.length / maxSamples));
+    const sample = [];
     for (let i = 0; i < allSegments.length && sample.length < maxSamples; i += step) {
         sample.push(allSegments[i]);
     }
@@ -262,12 +267,12 @@ async function runAIEvaluation(trip, delayMinutes, currentLat, currentLng, liveE
     console.log(`[Worker] 🤖 Invoking Gemini Agent for Trip ${trip.id} (reason: ${triggerReason})...`);
 
     const currentRouteStats = {
-        distance_meters:   liveDistanceMeters,
-        duration_seconds:  liveEtaSeconds,
-        ai_risk_level:     'medium',
+        distance_meters: liveDistanceMeters,
+        duration_seconds: liveEtaSeconds,
+        ai_risk_level: 'medium',
         deadline_timestamp: trip.deadline_timestamp,
         current_slack_hours: liveSlackTimeHours,
-        polyline:          trip.polyline
+        polyline: trip.polyline
     };
 
     const decision = await evaluateTripAnomaly(trip, delayMinutes, currentLat, currentLng, currentRouteStats);
@@ -306,7 +311,7 @@ async function handleReroute(trip, decision, freshReasoning, currentLat, current
     console.log(`[Worker] 🔄 AGENT DECISION: Reroute Trip ${trip.id} → ${decision.new_route_id}`);
 
     const cachedRoute = getRouteFromCache(decision.new_route_id);
-    let newRouteDbId  = trip.current_route_id; // Fallback: keep existing
+    let newRouteDbId = trip.current_route_id; // Fallback: keep existing
 
     if (!cachedRoute) {
         console.warn(`[Worker] Route "${decision.new_route_id}" not found in cache. Cannot save geometry.`);
@@ -324,22 +329,22 @@ async function handleReroute(trip, decision, freshReasoning, currentLat, current
         console.log(`[Worker] Route already exists (ID: ${newRouteDbId}, Index: ${existingRes.rows[0].route_index}). Reusing.`);
     } else {
         // Determine next route letter (A, B, C...)
-        const countRes  = await pool.query('SELECT COUNT(*) AS cnt FROM routes WHERE trip_id = $1', [trip.id]);
+        const countRes = await pool.query('SELECT COUNT(*) AS cnt FROM routes WHERE trip_id = $1', [trip.id]);
         const nextIndex = String.fromCharCode(65 + parseInt(countRes.rows[0].cnt));
 
         // Calculate costs
         const truckMileage = parseFloat(trip.mileage_kmpl) || 4.0;
-        const fuelCost     = (cachedRoute.distance / 1000 / truckMileage) * 90;
-        const totalCost    = fuelCost + (cachedRoute.toll_cost || 0);
+        const fuelCost = (cachedRoute.distance / 1000 / truckMileage) * 90;
+        const totalCost = fuelCost + (cachedRoute.toll_cost || 0);
 
         // Stitch old history (origin → current position) with new future path
         let finalPolyline = cachedRoute.polyline;
         if (trip.polyline) {
-            const oldPoints      = decodePolyline(trip.polyline);
-            const newPoints      = decodePolyline(cachedRoute.polyline);
+            const oldPoints = decodePolyline(trip.polyline);
+            const newPoints = decodePolyline(cachedRoute.polyline);
 
             let nearestIndex = 0;
-            let minDist      = Infinity;
+            let minDist = Infinity;
             for (let i = 0; i < oldPoints.length; i++) {
                 const d = Math.sqrt(
                     Math.pow(oldPoints[i].lat - currentLat, 2) +
@@ -349,7 +354,7 @@ async function handleReroute(trip, decision, freshReasoning, currentLat, current
             }
 
             const stitched = [...oldPoints.slice(0, nearestIndex), ...newPoints];
-            finalPolyline  = encodePolyline(stitched);
+            finalPolyline = encodePolyline(stitched);
             console.log(`[Worker] Stitched polyline (${nearestIndex} history pts + ${newPoints.length} new pts).`);
         }
 

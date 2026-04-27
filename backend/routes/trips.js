@@ -839,26 +839,38 @@ router.post('/locations', async (req, res) => {
             Number.isFinite(distanceToSourceMeters) &&
             distanceToSourceMeters <= START_TRIP_RADIUS_METERS
         ) {
-            // Assign initial baseline route upon activation
-            const baselineRes = await pool.query(`SELECT id, polyline FROM routes WHERE trip_id = $1 AND route_index = 'A'`, [tripId]);
-            const baselineId = baselineRes.rows[0] ? baselineRes.rows[0].id : null;
-            if (baselineId) {
-                currentRouteId = baselineId;
-                tripResult.rows[0].polyline = baselineRes.rows[0].polyline;
+            // Prefer the AI-chosen route; fall back to Route A if AI hasn't decided yet.
+            const routeRes = await pool.query(
+                `SELECT id, polyline, duration_seconds
+                 FROM routes
+                 WHERE trip_id = $1
+                 ORDER BY is_ai_recommended DESC, route_index ASC
+                 LIMIT 1`,
+                [tripId]
+            );
+            const assignedRoute = routeRes.rows[0] || null;
+            const assignedRouteId = assignedRoute?.id || null;
+
+            if (assignedRoute) {
+                currentRouteId = assignedRouteId;
+                tripResult.rows[0].polyline = assignedRoute.polyline;
             }
 
             const activateTripResult = await pool.query(
                 `UPDATE trips
-                 SET status = 'active', current_route_id = $2
+                 SET status = 'active',
+                     current_route_id = $2,
+                     baseline_eta_seconds = COALESCE($3, baseline_eta_seconds)
                  WHERE id = $1
                    AND status = 'not started'
                  RETURNING status`,
-                [tripId, baselineId]
+                [tripId, assignedRouteId, assignedRoute?.duration_seconds ?? null]
             );
 
             if (activateTripResult.rowCount > 0) {
                 startedNow = true;
                 nextTripStatus = activateTripResult.rows[0].status;
+                console.log(`[Trip] Activated trip ${tripId} with route ${assignedRouteId} (baseline: ${assignedRoute?.duration_seconds}s).`);
 
                 // Fire-and-forget: enrich all segments for this trip with real-time
                 // traffic + weather data now that the trip is actually starting.
@@ -882,9 +894,10 @@ router.post('/locations', async (req, res) => {
         );
 
         let googleMapsUrl = null;
-        // Only generate the URL once AI has made its initial decision (stay_course or reroute).
-        // Once optimized, we send it persistently so the driver always has the latest link.
-        if (currentRouteId && aiDecision) {
+        // Only generate a navigation URL when the current route was explicitly recommended by AI.
+        // If the route is not AI-recommended (e.g. still on baseline Route A), return null.
+        const isAiRecommended = !!tripResult.rows[0].is_ai_recommended;
+        if (currentRouteId && isAiRecommended) {
             let waypointsStr = '';
             const polyline = tripResult.rows[0].polyline;
             if (polyline) {

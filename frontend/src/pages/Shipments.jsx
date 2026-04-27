@@ -727,22 +727,19 @@ export default function Shipments() {
                                                             Tolls: {trip.current_route_has_tolls ? 'Yes' : 'No'}
                                                         </span>
                                                         <span className="inline-flex items-center gap-2 rounded-full bg-surface-container-low px-3 py-1 text-xs font-semibold text-green-700 border border-green-200 bg-green-50">
-                                                            <span className="material-symbols-outlined text-[0.95rem]">payments</span>
-                                                            Cost: ₹{trip.current_route_ai_total_cost_inr || 0}
+                                                            <span className="material-symbols-outlined text-[0.95rem]">local_gas_station</span>
+                                                            Fuel: ₹{trip.current_route_ai_fuel_cost_inr || 0}
                                                         </span>
-                                                        {trip.current_route_ai_slack_time_hours !== null && (
+                                                        {(trip.live_slack_time_hours !== null || trip.current_route_ai_slack_time_hours !== null) && (
                                                             <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold border ${
-                                                                Number((trip.live_slack_time_hours !== null && trip.live_slack_time_hours !== undefined) 
-                                                                    ? trip.live_slack_time_hours 
-                                                                    : (trip.current_route_ai_slack_time_hours || 0)
-                                                                ) < 0 
+                                                                Number(trip.live_slack_time_hours ?? trip.current_route_ai_slack_time_hours) < 0 
                                                                     ? 'bg-red-50 text-red-700 border-red-200' 
-                                                                    : Number(trip.current_route_ai_slack_time_hours) < 0.5 
+                                                                    : Number(trip.live_slack_time_hours ?? trip.current_route_ai_slack_time_hours) < 0.5 
                                                                         ? 'bg-amber-50 text-amber-700 border-amber-200'
                                                                         : 'bg-green-50 text-green-700 border-green-200'
                                                             }`}>
                                                                 <span className="material-symbols-outlined text-[0.95rem]">hourglass_empty</span>
-                                                                Slack: {trip.current_route_ai_slack_time_hours}h
+                                                                Slack: {trip.live_slack_time_hours ?? trip.current_route_ai_slack_time_hours}h
                                                             </span>
                                                         )}
                                                         {trip.current_route_ai_risk_level && trip.current_route_ai_risk_level !== 'low' && (

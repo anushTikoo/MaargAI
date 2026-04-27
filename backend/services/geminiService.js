@@ -99,7 +99,7 @@ RESPONSE FORMAT — Respond ONLY with valid JSON, no markdown, no explanation ou
 {
   "selected_route": "<route_id>",
   "reasoning": [
-    "<specific reason 1 referencing actual numbers>",
+    "<specific reason 1 referencing actual numbers. IDENTIFY ROUTES BY THEIR DURATION (e.g. 'the 3h 15m route') instead of IDs.>",
     "<specific reason 2 referencing actual numbers>",
     "<specific reason 3 referencing actual numbers>"
   ],
@@ -208,7 +208,8 @@ export async function evaluateTripAnomaly(trip, delayMinutes, currentLat, curren
                         currentLat: { type: "NUMBER" },
                         currentLng: { type: "NUMBER" },
                         destLat: { type: "NUMBER" },
-                        destLng: { type: "NUMBER" }
+                        destLng: { type: "NUMBER" },
+                        currentRoutePolyline: { type: "STRING", description: "The polyline of the route the truck is currently on." }
                     },
                     required: ["currentLat", "currentLng", "destLat", "destLng"]
                 }
@@ -251,12 +252,15 @@ INSTRUCTIONS:
    - A route with "max_delay_ratio" > 3.0 is a severe bottleneck (gridlock).
    - "traffic_density_score" > 0.5 indicates widespread congestion.
    - If an alternative saves significant time (e.g. > 15m) but costs 500-1000 INR more, weigh the urgency of the delivery deadline.
-4. If no good alternatives exist or they are excessively expensive for minimal gain, decide to "stay_course".
+4. IMPORTANT: Check if the "selected_route" is the one labeled as "is_current_route": true. 
+   - If the best route is the current one, you MUST decide to "stay_course".
+   - ONLY decide to "reroute" if you are switching to a DIFFERENT route that is significantly better.
+   - If no good alternatives exist or they are excessively expensive for minimal gain, decide to "stay_course".
 
 When you have enough information, output ONLY a valid JSON decision (no markdown fences) in this exact format:
 {
   "action": "stay_course" | "reroute",
-  "reasoning": "Detailed explanation. MUST mention specific costs (INR), time savings (minutes), traffic metrics (avg/max delay), and precisely how this affects the DELIVERY DEADLINE and SLACK TIME.",
+  "reasoning": "Detailed explanation. MUST mention specific costs (INR), time savings (minutes), traffic metrics (avg/max delay), and precisely how this affects the DELIVERY DEADLINE and SLACK TIME. IDENTIFY ROUTES BY THEIR DURATION (e.g. 'the 3h 15m route') instead of IDs. If staying on course, explain why alternatives weren't better.",
   "new_route_id": "<route_id if reroute, else null>"
 }
 `;
@@ -273,6 +277,7 @@ When you have enough information, output ONLY a valid JSON decision (no markdown
                 let toolResult = {};
                 if (call.name === 'get_alternative_routes') {
                     call.args.truckMileage = trip.mileage_kmpl;
+                    call.args.currentRoutePolyline = currentRoute.polyline;
                     toolResult = await get_alternative_routes(call.args);
                 } else if (call.name === 'analyze_route_segments') {
                     toolResult = await analyze_route_segments(call.args);

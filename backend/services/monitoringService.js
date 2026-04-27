@@ -125,7 +125,8 @@ async function processSingleTrip(trip) {
                 duration_seconds: liveEtaSeconds,
                 ai_risk_level: 'medium',
                 deadline_timestamp: trip.deadline_timestamp,
-                current_slack_hours: liveSlackTimeHours
+                current_slack_hours: liveSlackTimeHours,
+                polyline: trip.polyline
             };
 
             const decision = await evaluateTripAnomaly(trip, delayMinutes, currentLat, currentLng, currentRouteStats);
@@ -172,8 +173,8 @@ async function processSingleTrip(trip) {
                     // Insert the new route
                     const insertRes = await pool.query(`
                                 INSERT INTO routes
-                                (trip_id, route_index, polyline, distance_meters, duration_seconds, has_tolls, toll_cost, is_ai_recommended, ai_total_cost_inr, ai_risk_level)
-                                VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $8, 'low')
+                                (trip_id, route_index, polyline, distance_meters, duration_seconds, has_tolls, toll_cost, is_ai_recommended, ai_total_cost_inr, ai_fuel_cost_inr, ai_risk_level)
+                                VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $8, $9, 'low')
                                 RETURNING id
                             `, [
                         trip.id,
@@ -183,7 +184,8 @@ async function processSingleTrip(trip) {
                         cachedRoute.duration,
                         cachedRoute.has_tolls || false,
                         cachedRoute.toll_cost || 0,
-                        totalCost
+                        totalCost,
+                        fuelCost
                     ]);
 
                         newRouteDbId = insertRes.rows[0].id;

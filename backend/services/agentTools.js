@@ -14,14 +14,18 @@ export function getRouteFromCache(routeId) {
 /**
  * Tool 1: Fetches alternative routes from the Google Maps API.
  */
-export async function get_alternative_routes({ currentLat, currentLng, destLat, destLng, truckMileage }) {
-    console.log(`[Tool] Executing get_alternative_routes for ${currentLat},${currentLng} to ${destLat},${destLng} with mileage ${truckMileage || 4.0} km/L`);
+export async function get_alternative_routes({ currentLat, currentLng, destLat, destLng, truckMileage, currentRoutePolyline }) {
+    console.log(`[Tool] Executing get_alternative_routes for ${currentLat},${currentLng} to ${destLat},${destLng}`);
     
     try {
         const routes = await getRoutes(currentLat, currentLng, destLat, destLng);
 
         const options = routes.map((r, index) => {
             const id = `Alternative Route ${index + 1}`;
+            
+            // Check if this alternative is effectively the same as the current route
+            // We use a simple length check + polyline match for speed
+            const isCurrent = currentRoutePolyline && (r.polyline === currentRoutePolyline);
             
             // Save to cache so the next tool can analyze it
             routeCache.set(id, {
@@ -37,6 +41,7 @@ export async function get_alternative_routes({ currentLat, currentLng, destLat, 
 
             return {
                 route_id: id,
+                is_current_route: isCurrent,
                 distance_meters: r.distanceMeters,
                 duration_seconds: r.durationSeconds,
                 has_tolls: r.hasTolls,

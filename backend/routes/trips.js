@@ -58,6 +58,7 @@ router.get('/', async (req, res) => {
                 r.toll_cost AS current_route_toll_cost,
                 r.is_ai_recommended AS current_route_is_ai_recommended,
                 r.ai_total_cost_inr AS current_route_ai_total_cost_inr,
+                r.ai_fuel_cost_inr AS current_route_ai_fuel_cost_inr,
                 r.ai_slack_time_hours AS current_route_ai_slack_time_hours,
                 r.ai_risk_level AS current_route_ai_risk_level,
                 t.live_eta_seconds,
@@ -128,13 +129,14 @@ router.get('/active-map', async (req, res) => {
                 COALESCE(current_route.toll_cost, fallback_route.toll_cost) AS toll_cost,
                 COALESCE(current_route.is_ai_recommended, fallback_route.is_ai_recommended) AS is_ai_recommended,
                 COALESCE(current_route.ai_total_cost_inr, fallback_route.ai_total_cost_inr) AS ai_total_cost_inr,
+                COALESCE(current_route.ai_fuel_cost_inr, fallback_route.ai_fuel_cost_inr) AS ai_fuel_cost_inr,
                 COALESCE(current_route.ai_slack_time_hours, fallback_route.ai_slack_time_hours) AS ai_slack_time_hours,
                 COALESCE(current_route.ai_risk_level, fallback_route.ai_risk_level) AS ai_risk_level
             FROM trips t
             JOIN trucks tr ON tr.id = t.truck_id
             LEFT JOIN routes current_route ON current_route.id = t.current_route_id
             LEFT JOIN LATERAL (
-                SELECT id, route_index, polyline, distance_meters, duration_seconds, has_tolls, toll_cost, is_ai_recommended, ai_total_cost_inr, ai_slack_time_hours, ai_risk_level
+                SELECT id, route_index, polyline, distance_meters, duration_seconds, has_tolls, toll_cost, is_ai_recommended, ai_total_cost_inr, ai_fuel_cost_inr, ai_slack_time_hours, ai_risk_level
                 FROM routes
                 WHERE trip_id = t.id
                 ORDER BY route_index ASC
@@ -608,12 +610,14 @@ async function enrichTripSegments(tripId) {
             await pool.query(
                 `UPDATE routes 
                  SET ai_total_cost_inr = $1,
-                     ai_slack_time_hours = $2,
-                     ai_risk_level = $3,
-                     is_ai_recommended = $4
-                 WHERE trip_id = $5 AND route_index = $6`,
+                     ai_fuel_cost_inr = $2,
+                     ai_slack_time_hours = $3,
+                     ai_risk_level = $4,
+                     is_ai_recommended = $5
+                 WHERE trip_id = $6 AND route_index = $7`,
                 [
                     routeData.fuel_cost_inr + (routeData.toll_cost_inr || 0),
+                    routeData.fuel_cost_inr,
                     routeData.slack_time_hours,
                     routeData.reliability_score < 0.3 ? 'low' : routeData.reliability_score < 0.7 ? 'medium' : 'high',
                     routeData.id === selectedIndex,
@@ -866,9 +870,9 @@ router.post('/locations', async (req, res) => {
         );
 
         let googleMapsUrl = null;
-        // Only generate the URL if AI has made its initial decision (stay_course or reroute)
-        // and we haven't notified the driver about this specific route ID yet.
-        if (currentRouteId && currentRouteId !== lastNotifiedRouteId && aiDecision) {
+        // Only generate the URL once AI has made its initial decision (stay_course or reroute).
+        // Once optimized, we send it persistently so the driver always has the latest link.
+        if (currentRouteId && aiDecision) {
             let waypointsStr = '';
             const polyline = tripResult.rows[0].polyline;
             if (polyline) {
@@ -910,11 +914,6 @@ router.post('/locations', async (req, res) => {
 
             // Added travelmode=driving and dir_action=navigate to ensure the phone app opens in turn-by-turn mode.
             googleMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${parsedLat},${parsedLng}&destination=${destLat},${destLng}${waypointsStr}&travelmode=driving&dir_action=navigate`;
-
-            await pool.query(
-                `UPDATE trips SET last_notified_route_id = $1 WHERE id = $2`,
-                [currentRouteId, tripId]
-            );
         }
 
         const shouldSyncLiveLocation = nextTripStatus === 'active';

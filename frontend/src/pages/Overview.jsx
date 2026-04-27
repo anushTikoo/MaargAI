@@ -3,7 +3,7 @@ import { getActiveMapTripsForCurrentUser } from '../services/tripsService';
 
 const DEFAULT_CENTER = { lat: 20.5937, lng: 78.9629 };
 const DEFAULT_ZOOM = 5;
-const ACTIVE_TRIP_REFRESH_MS = 5000;
+const ACTIVE_TRIP_REFRESH_MS = 2000;
 const ROUTE_COLORS = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2'];
 
 function isValidCoordinate(lat, lng) {
@@ -223,11 +223,11 @@ function buildTripInfoHtml(trip) {
                 ${trip?.route?.is_ai_recommended ? `
                 <div style="margin-top: 6px; display: flex; gap: 4px; flex-wrap: wrap;">
                     <div style="background: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d; padding: 2px 6px; border-radius: 12px; font-size: 9px; font-weight: 700;">
-                        Cost: ₹${trip.route.ai_total_cost_inr || 0}
+                        Fuel: ₹${trip.route.ai_fuel_cost_inr || 0}
                     </div>
-                    ${trip.route.ai_slack_time_hours !== null ? `
-                    <div style="background: ${Number(trip.route.ai_slack_time_hours) < 0 ? '#fef2f2' : Number(trip.route.ai_slack_time_hours) < 0.5 ? '#fffbeb' : '#f0fdf4'}; border: 1px solid ${Number(trip.route.ai_slack_time_hours) < 0 ? '#fecaca' : Number(trip.route.ai_slack_time_hours) < 0.5 ? '#fde68a' : '#bbf7d0'}; color: ${Number(trip.route.ai_slack_time_hours) < 0 ? '#b91c1c' : Number(trip.route.ai_slack_time_hours) < 0.5 ? '#b45309' : '#15803d'}; padding: 2px 6px; border-radius: 12px; font-size: 9px; font-weight: 700;">
-                        Slack: ${trip.route.ai_slack_time_hours}h
+                    ${(trip.live_slack_time_hours !== null || trip.route.ai_slack_time_hours !== null) ? `
+                    <div style="background: ${Number(trip.live_slack_time_hours ?? trip.route.ai_slack_time_hours) < 0 ? '#fef2f2' : Number(trip.live_slack_time_hours ?? trip.route.ai_slack_time_hours) < 0.5 ? '#fffbeb' : '#f0fdf4'}; border: 1px solid ${Number(trip.live_slack_time_hours ?? trip.route.ai_slack_time_hours) < 0 ? '#fecaca' : Number(trip.live_slack_time_hours ?? trip.route.ai_slack_time_hours) < 0.5 ? '#fde68a' : '#bbf7d0'}; color: ${Number(trip.live_slack_time_hours ?? trip.route.ai_slack_time_hours) < 0 ? '#b91c1c' : Number(trip.live_slack_time_hours ?? trip.route.ai_slack_time_hours) < 0.5 ? '#b45309' : '#15803d'}; padding: 2px 6px; border-radius: 12px; font-size: 9px; font-weight: 700;">
+                        Slack: ${trip.live_slack_time_hours ?? trip.route.ai_slack_time_hours}h
                     </div>` : ''}
                     ${trip.route.ai_risk_level && trip.route.ai_risk_level !== 'low' ? `
                     <div style="background: ${trip.route.ai_risk_level === 'high' ? '#fef2f2' : trip.route.ai_risk_level === 'medium' ? '#fffbeb' : '#f0fdf4'}; border: 1px solid ${trip.route.ai_risk_level === 'high' ? '#fecaca' : trip.route.ai_risk_level === 'medium' ? '#fde68a' : '#bbf7d0'}; color: ${trip.route.ai_risk_level === 'high' ? '#b91c1c' : trip.route.ai_risk_level === 'medium' ? '#b45309' : '#15803d'}; padding: 2px 6px; border-radius: 12px; font-size: 9px; font-weight: 700; text-transform: uppercase;">

@@ -185,7 +185,7 @@ function clearTripLayer(layer) {
     }
 }
 
-function buildTripInfoHtml(trip) {
+function buildTripInfoHtml(trip, hoverCoords = null) {
     const truckLabel = trip.truck_number || `#${trip.truck_id}`;
     const sourceLabel = trip.source || `${formatCoordinate(trip.source_lat)}, ${formatCoordinate(trip.source_lng)}`;
     const destinationLabel = trip.destination || `${formatCoordinate(trip.dest_lat)}, ${formatCoordinate(trip.dest_lng)}`;
@@ -233,6 +233,12 @@ function buildTripInfoHtml(trip) {
                     <div style="background: ${trip.route.ai_risk_level === 'high' ? '#fef2f2' : trip.route.ai_risk_level === 'medium' ? '#fffbeb' : '#f0fdf4'}; border: 1px solid ${trip.route.ai_risk_level === 'high' ? '#fecaca' : trip.route.ai_risk_level === 'medium' ? '#fde68a' : '#bbf7d0'}; color: ${trip.route.ai_risk_level === 'high' ? '#b91c1c' : trip.route.ai_risk_level === 'medium' ? '#b45309' : '#15803d'}; padding: 2px 6px; border-radius: 12px; font-size: 9px; font-weight: 700; text-transform: uppercase;">
                         ${trip.route.ai_risk_level} Risk
                     </div>` : ''}
+                </div>
+                ` : ''}
+                ${hoverCoords ? `
+                <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid #f3f4f6; font-family: 'JetBrains Mono', monospace; font-size: 9px; color: #6b7280; display: flex; justify-content: space-between;">
+                    <span>LAT: ${hoverCoords.lat.toFixed(6)}</span>
+                    <span>LNG: ${hoverCoords.lng.toFixed(6)}</span>
                 </div>
                 ` : ''}
             </div>
@@ -522,7 +528,10 @@ export default function Overview() {
                 routeListeners.push(
                     routeHitArea.addListener('mousemove', (event) => {
                         if (event?.latLng) {
+                            const lat = event.latLng.lat();
+                            const lng = event.latLng.lng();
                             tripInfoWindowRef.current?.setPosition(event.latLng);
+                            tripInfoWindowRef.current?.setContent(buildTripInfoHtml(trip, { lat, lng }));
                         }
                     })
                 );

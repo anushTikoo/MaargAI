@@ -114,3 +114,31 @@ export function segmentRoute(decodedPoints, targetKm = 15) {
 
     return segments;
 }
+
+export function encodePolyline(points) {
+    let lastLat = 0;
+    let lastLng = 0;
+    let result = '';
+
+    function encodeValue(value) {
+        value = value < 0 ? ~(value << 1) : value << 1;
+        while (value >= 0x20) {
+            result += String.fromCharCode((0x20 | (value & 0x1f)) + 63);
+            value >>= 5;
+        }
+        result += String.fromCharCode(value + 63);
+    }
+
+    for (let i = 0; i < points.length; i++) {
+        const lat = Math.round(points[i].lat * 1e5);
+        const lng = Math.round(points[i].lng * 1e5);
+
+        encodeValue(lat - lastLat);
+        encodeValue(lng - lastLng);
+
+        lastLat = lat;
+        lastLng = lng;
+    }
+
+    return result;
+}

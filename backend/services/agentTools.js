@@ -75,8 +75,10 @@ export async function analyze_route_segments({ route_id }) {
         const path = decodePolyline(route.polyline);
         if (path.length < 2) return { error: "Route too short to analyze." };
 
-        // Segment the route into chunks (using 5000 meters for fast demo analysis)
-        const segments = segmentRoute(path, 5000);
+        // Dynamic segmentation: 10% of total distance, but clamped between 8km and 20km
+        const totalDistKm = route.distance / 1000;
+        const segmentSizeKm = Math.max(8, Math.min(20, totalDistKm * 0.1));
+        const segments = segmentRoute(path, segmentSizeKm);
         
         if (segments.length === 0) return { error: "Failed to segment route." };
 

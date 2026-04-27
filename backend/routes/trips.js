@@ -120,6 +120,10 @@ router.get('/active-map', async (req, res) => {
                 t.live_eta_seconds,
                 t.live_distance_meters,
                 t.live_slack_time_hours,
+                t.last_location_at,
+                t.last_ai_trigger_at,
+                t.ai_trigger_reason,
+                t.last_checked_at,
                 COALESCE(current_route.id, fallback_route.id) AS route_id,
                 COALESCE(current_route.route_index, fallback_route.route_index) AS route_index,
                 COALESCE(current_route.polyline, fallback_route.polyline) AS polyline,
@@ -180,10 +184,18 @@ router.get('/active-map', async (req, res) => {
                         : 0,
                     is_ai_recommended: activeTrip.is_ai_recommended,
                     ai_total_cost_inr: activeTrip.ai_total_cost_inr,
+                    ai_fuel_cost_inr: activeTrip.ai_fuel_cost_inr,
                     ai_slack_time_hours: activeTrip.ai_slack_time_hours,
                     ai_risk_level: activeTrip.ai_risk_level
                 }
                 : null,
+            live_eta_seconds: activeTrip.live_eta_seconds,
+            live_distance_meters: activeTrip.live_distance_meters,
+            live_slack_time_hours: activeTrip.live_slack_time_hours,
+            last_location_at: activeTrip.last_location_at,
+            last_ai_trigger_at: activeTrip.last_ai_trigger_at,
+            ai_trigger_reason: activeTrip.ai_trigger_reason,
+            last_checked_at: activeTrip.last_checked_at,
         }));
 
         const tripsWithLiveLocations = await Promise.all(

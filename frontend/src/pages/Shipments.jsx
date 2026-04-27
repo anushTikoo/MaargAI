@@ -873,9 +873,25 @@ export default function Shipments() {
                                                             </div>
                                                             <div className="flex flex-col">
                                                                 <span className="text-[10px] text-secondary font-bold uppercase tracking-wider">AI Evaluation</span>
-                                                                <span className="text-xs font-black text-on-surface">
-                                                                    {trip.last_ai_trigger_at ? formatTime24h(trip.last_ai_trigger_at) : 'Not Evaluated'}
-                                                                </span>
+                                                                {trip.last_ai_trigger_at ? (
+                                                                    <span className="text-xs font-black text-on-surface">{formatTime24h(trip.last_ai_trigger_at)}</span>
+                                                                ) : (
+                                                                    <span className="text-xs font-bold text-secondary">Not Evaluated</span>
+                                                                )}
+                                                                {trip.ai_trigger_reason && (
+                                                                    <span className={`mt-0.5 inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-full w-fit ${
+                                                                        trip.ai_trigger_reason === 'delay'
+                                                                            ? 'bg-red-100 text-red-700'
+                                                                            : trip.ai_trigger_reason === 'risk_spike'
+                                                                                ? 'bg-amber-100 text-amber-700'
+                                                                                : 'bg-blue-100 text-blue-700'
+                                                                    }`}>
+                                                                        <span className="material-symbols-outlined text-[0.65rem]">
+                                                                            {trip.ai_trigger_reason === 'delay' ? 'timer_off' : trip.ai_trigger_reason === 'risk_spike' ? 'warning' : 'search'}
+                                                                        </span>
+                                                                        {trip.ai_trigger_reason === 'delay' ? 'Delay' : trip.ai_trigger_reason === 'risk_spike' ? 'Risk Spike' : 'Opportunity'}
+                                                                    </span>
+                                                                )}
                                                             </div>
                                                         </div>
                                                     </div>

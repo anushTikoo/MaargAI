@@ -71,6 +71,9 @@ CREATE TABLE trips (
     live_distance_meters INT,
     last_location_at TIMESTAMP,
     last_ai_trigger_at TIMESTAMP,
+    ai_trigger_reason VARCHAR(30),
+    last_route_reliability NUMERIC(5,3),
+    last_opportunity_check_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT chk_trip_status

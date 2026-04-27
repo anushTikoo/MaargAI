@@ -1,34 +1,51 @@
 import pool from '../db.js';
-import { getAIRouteRecommendation, evaluateTripAnomaly } from './geminiService.js';
+import { evaluateTripAnomaly } from './geminiService.js';
 import { getRoutes } from './routesService.js';
 import { getRouteFromCache } from './agentTools.js';
+import { decodePolyline, encodePolyline, segmentRoute } from './segmentationService.js';
+import { fetchSegmentTrafficDurations } from './trafficService.js';
 
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+/** Dynamic delay thresholds (minutes) based on available slack. */
+const DELAY_THRESHOLD_TIGHT_SLACK  = 10;  // slack < 0.5h
+const DELAY_THRESHOLD_NORMAL_SLACK = 15;  // slack >= 0.5h or unknown
+const DELAY_THRESHOLD_NO_DEADLINE  = 20;  // no deadline set
+
+/** Trigger 2: minimum absolute reliability score AND minimum delta to fire. */
+const RELIABILITY_SPIKE_ABSOLUTE_MIN = 0.7;  // route must be "Risky+"
+const RELIABILITY_SPIKE_DELTA_MIN    = 0.3;  // must have worsened by this much since last check
+
+/** Trigger 3: minimum gap (minutes) since last AI call for an opportunity scan. */
+const OPPORTUNITY_CHECK_INTERVAL_MIN = 30;
+
+// ─── Main Loop ───────────────────────────────────────────────────────────────
 
 /**
- * Main monitoring loop logic.
- * Fetches active trips and re-calculates their status.
+ * Main monitoring loop. Fetches all active trips and processes each one.
  */
 export async function processActiveTrips() {
     console.log('[Worker] Starting monitoring loop...');
     const startTime = Date.now();
 
     try {
-        // 1. Fetch active trips that have a current route
         const { rows: trips } = await pool.query(`
-            SELECT t.*, tr.mileage_kmpl, r.polyline, r.route_index as current_route_index, r.distance_meters as route_distance, r.duration_seconds as route_duration
+            SELECT t.*, tr.mileage_kmpl,
+                   r.polyline, r.route_index AS current_route_index,
+                   r.distance_meters AS route_distance, r.duration_seconds AS route_duration
             FROM trips t
             JOIN trucks tr ON t.truck_id = tr.id
             LEFT JOIN routes r ON t.current_route_id = r.id
             WHERE t.status = 'active' AND t.current_route_id IS NOT NULL
         `);
 
-        console.log(`[Worker] Found ${trips.length} active trips to process.`);
+        console.log(`[Worker] Found ${trips.length} active trip(s) to process.`);
 
         for (const trip of trips) {
             await processSingleTrip(trip);
         }
 
-        const duration = (Date.now() - startTime) / 1000;
+        const duration = ((Date.now() - startTime) / 1000).toFixed(2);
         console.log(`[Worker] Loop completed in ${duration}s.`);
         return { processed: trips.length, duration };
 
@@ -38,58 +55,50 @@ export async function processActiveTrips() {
     }
 }
 
-/**
- * Process a single trip: re-calculate ETA and check for anomalies.
- */
-async function processSingleTrip(trip) {
-    const googleMapsKey = process.env.GOOGLE_MAPS_API_KEY;
+// ─── Single Trip Processor ───────────────────────────────────────────────────
 
-    // For the demo, we use the last recorded GPS or source.
-    const currentLat = trip.last_gps_lat || trip.source_lat;
-    const currentLng = trip.last_gps_lng || trip.source_lng;
+async function processSingleTrip(trip) {
+    // Skip trips with no recorded GPS (truck hasn't moved yet).
+    if (!trip.last_gps_lat) return;
+
+    const currentLat = parseFloat(trip.last_gps_lat);
+    const currentLng = parseFloat(trip.last_gps_lng);
 
     try {
-        // Optimization: Only re-calculate ETA if a delay was injected or GPS was warped
-        // This prevents wasteful API calls during the "idle" monitoring state.
-        if (!trip.last_gps_lat) {
-            return;
-        }
-
-        // 2. Re-calculate ETA from CURRENT position to DESTINATION using Routes API v2
+        // ── Step 1: Get live ETA from Google Routes API ──────────────────────
         const routes = await getRoutes(currentLat, currentLng, trip.dest_lat, trip.dest_lng);
 
         if (!routes || routes.length === 0) {
-            console.warn(`[Worker] Failed to get valid routing data for trip ${trip.id}.`);
+            console.warn(`[Worker] No routing data returned for trip ${trip.id}.`);
             return;
         }
 
-        // Map route_index (A, B, C...) to array index (0, 1, 2...)
-        // Default to 0 if something goes wrong.
-        const routeIdxMap = { 'A': 0, 'B': 1, 'C': 2 };
-        const assignedIdx = routeIdxMap[trip.current_route_index] || 0;
-        
-        // Use the assigned route if available in Google's alternatives, else fallback to best.
+        // Pick the same route index (A=0, B=1, C=2) the truck is assigned to.
+        const routeIdxMap = { A: 0, B: 1, C: 2 };
+        const assignedIdx = routeIdxMap[trip.current_route_index] ?? 0;
         const bestRoute = routes[assignedIdx] || routes[0];
 
-        const liveEtaSeconds = bestRoute.durationSeconds;
+        const liveEtaSeconds     = bestRoute.durationSeconds;
         const liveDistanceMeters = bestRoute.distanceMeters;
 
-        // 3. Calculate Delay
-        // Predicted Arrival = Current Time + Live ETA
-        // Planned Arrival = Created At + Baseline ETA
-        const createdAtMs = new Date(trip.created_at).getTime();
-        const plannedArrivalMs = createdAtMs + (trip.baseline_eta_seconds * 1000);
+        // ── Step 2: Calculate delay & slack ──────────────────────────────────
+        const createdAtMs       = new Date(trip.created_at).getTime();
+        const plannedArrivalMs  = createdAtMs + (trip.baseline_eta_seconds * 1000);
         const predictedArrivalMs = Date.now() + (liveEtaSeconds * 1000);
-
-        // Total delay is (Predicted - Planned)
         const totalDelaySeconds = Math.floor((predictedArrivalMs - plannedArrivalMs) / 1000);
-        const delayMinutes = Math.floor(totalDelaySeconds / 60);
+        const delayMinutes      = Math.floor(totalDelaySeconds / 60);
 
-        console.log(`[Worker] Trip ${trip.id} | Predicted Delay: ${delayMinutes} mins`);
+        let liveSlackTimeHours = null;
+        if (trip.deadline_timestamp) {
+            const deadlineMs = new Date(trip.deadline_timestamp).getTime();
+            const slackMs    = deadlineMs - predictedArrivalMs;
+            liveSlackTimeHours = parseFloat((slackMs / 3600000).toFixed(2));
+        }
 
-        // 4. Save Checkpoint
-        // Map the string risk level to a numerical score for the checkpoints table
-        const riskMap = { 'low': 0.1, 'medium': 0.4, 'high': 0.8 };
+        console.log(`[Worker] Trip ${trip.id} | Delay: ${delayMinutes}m | Slack: ${liveSlackTimeHours ?? 'N/A'}h`);
+
+        // ── Step 3: Persist checkpoint & live metrics ─────────────────────────
+        const riskMap     = { low: 0.1, medium: 0.4, high: 0.8 };
         const numericalRisk = riskMap[trip.ai_risk_level] || 0.0;
 
         await pool.query(`
@@ -97,123 +106,270 @@ async function processSingleTrip(trip) {
             VALUES ($1, $2, $3, $4, $5, $6)
         `, [trip.id, currentLat, currentLng, totalDelaySeconds, liveEtaSeconds, numericalRisk]);
 
-        // 5. Update Trip Last Checked, Live ETA, Live Distance, and Live Slack
-        let liveSlackTimeHours = null;
-        if (trip.deadline_timestamp) {
-            const etaDate = new Date(Date.now() + (liveEtaSeconds * 1000));
-            const deadlineDate = new Date(trip.deadline_timestamp);
-            const slackMs = deadlineDate.getTime() - etaDate.getTime();
-            liveSlackTimeHours = parseFloat((slackMs / 3600000).toFixed(2));
-        }
-
         await pool.query(`
             UPDATE trips
-            SET last_checked_at = CURRENT_TIMESTAMP,
-                live_eta_seconds = $1,
-                live_distance_meters = $2,
+            SET last_checked_at       = CURRENT_TIMESTAMP,
+                live_eta_seconds      = $1,
+                live_distance_meters  = $2,
                 live_slack_time_hours = $3
             WHERE id = $4
         `, [liveEtaSeconds, liveDistanceMeters, liveSlackTimeHours, trip.id]);
 
-        // 6. TRIGGER ENGINE (Layer 2)
-        // Only call AI if delay is significant (> 15 mins)
-        if (delayMinutes > 15) {
-            console.log(`[Worker] 🚨 ANOMALY DETECTED for Trip ${trip.id} (Delay: ${delayMinutes}m). Waking up Gemini...`);
+        // ── Step 4: PROACTIVE TRIGGER ENGINE ─────────────────────────────────
 
-            const currentRouteStats = {
-                distance_meters: liveDistanceMeters,
-                duration_seconds: liveEtaSeconds,
-                ai_risk_level: 'medium',
-                deadline_timestamp: trip.deadline_timestamp,
-                current_slack_hours: liveSlackTimeHours,
-                polyline: trip.polyline
-            };
+        const triggerResult = await evaluateTriggers(
+            trip, delayMinutes, liveSlackTimeHours, liveEtaSeconds, liveDistanceMeters, currentLat, currentLng
+        );
 
-            const decision = await evaluateTripAnomaly(trip, delayMinutes, currentLat, currentLng, currentRouteStats);
+        if (triggerResult.shouldCallAI) {
+            await runAIEvaluation(trip, delayMinutes, currentLat, currentLng, liveEtaSeconds, liveDistanceMeters, liveSlackTimeHours, triggerResult.reason);
+        }
 
-            // Update last_ai_trigger_at so UI knows Gemini was just called
-            await pool.query('UPDATE trips SET last_ai_trigger_at = CURRENT_TIMESTAMP WHERE id = $1', [trip.id]);
-
-            // Format reasoning: Ensure it's a string and add a timestamp so the user sees it's fresh
-            const freshReasoning = (Array.isArray(decision.reasoning) ? decision.reasoning.join(' ') : (decision.reasoning || ''))
-                + `\n\n(Last Evaluated: ${new Date().toLocaleTimeString()})`;
-
-            if (decision.action === 'reroute' && decision.new_route_id) {
-                console.log(`[Worker] 🔄 AGENT DECISION: Rerouting Trip ${trip.id} to ${decision.new_route_id}`);
-
-                const cachedRoute = getRouteFromCache(decision.new_route_id);
-                let newRouteDbId = trip.current_route_id; // Default fallback
-
-                if (cachedRoute) {
-                    console.log(`[Worker] Checking if Agent Route already exists in Database...`);
-
-                    const existingRouteRes = await pool.query(
-                        'SELECT id, route_index FROM routes WHERE trip_id = $1 AND polyline = $2 LIMIT 1',
-                        [trip.id, cachedRoute.polyline]
-                    );
-
-                    if (existingRouteRes.rowCount > 0) {
-                        newRouteDbId = existingRouteRes.rows[0].id;
-                        console.log(`[Worker] Agent Route already exists (ID: ${newRouteDbId}, Index: ${existingRouteRes.rows[0].route_index}). Reusing.`);
-                    } else {
-                        console.log(`[Worker] Saving Agent Ad-Hoc Route to Database...`);
-
-                    // Find the next route_index letter for this trip (A, B, C...)
-                    const idxRes = await pool.query(
-                        'SELECT COUNT(*) AS route_count FROM routes WHERE trip_id = $1',
-                        [trip.id]
-                    );
-                    const nextIndex = String.fromCharCode(65 + parseInt(idxRes.rows[0].route_count));
-
-                    // Calculate estimated cost and risk for the UI
-                    const truckMileage = parseFloat(trip.mileage_kmpl) || 4.0;
-                    const fuelCost = (cachedRoute.distance / 1000 / truckMileage) * 90; // Fuel @ 90
-                    const totalCost = fuelCost + (cachedRoute.toll_cost || 0);
-
-                    // Insert the new route
-                    const insertRes = await pool.query(`
-                                INSERT INTO routes
-                                (trip_id, route_index, polyline, distance_meters, duration_seconds, has_tolls, toll_cost, is_ai_recommended, ai_total_cost_inr, ai_fuel_cost_inr, ai_risk_level)
-                                VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $8, $9, 'low')
-                                RETURNING id
-                            `, [
-                        trip.id,
-                        nextIndex,
-                        cachedRoute.polyline,
-                        cachedRoute.distance,
-                        cachedRoute.duration,
-                        cachedRoute.has_tolls || false,
-                        cachedRoute.toll_cost || 0,
-                        totalCost,
-                        fuelCost
-                    ]);
-
-                        newRouteDbId = insertRes.rows[0].id;
-                        console.log(`[Worker] Saved new route as ID: ${newRouteDbId} (Index ${nextIndex})`);
-                    }
-                } else {
-                    console.warn(`[Worker] Route ${decision.new_route_id} not found in cache. Cannot save geometry!`);
-                }
-
-                // Update the trip with the new reasoning, decision, and the new route
-                // We immediately set live_eta_seconds to the new route's duration so the frontend updates instantly.
-                await pool.query(`
-                            UPDATE trips
-                            SET ai_reroute_reason = $1,
-                                current_route_id = $2,
-                                ai_decision = $3,
-                                live_eta_seconds = $4
-                            WHERE id = $5
-                        `, [freshReasoning, newRouteDbId, decision.action, cachedRoute.duration, trip.id]);
-            } else {
-                console.log(`[Worker] 🛣️ AGENT DECISION: Stay the course.`);
-                await pool.query(`
-                            UPDATE trips SET ai_reroute_reason = $1, ai_decision = 'stay_course' WHERE id = $2
-                        `, [freshReasoning || 'AI evaluated alternative routes but decided staying the course is optimal.', trip.id]);
-            }
+        // Persist the freshly computed reliability score (so next run can detect delta).
+        if (triggerResult.currentReliability !== null) {
+            await pool.query(
+                'UPDATE trips SET last_route_reliability = $1 WHERE id = $2',
+                [triggerResult.currentReliability, trip.id]
+            );
         }
 
     } catch (err) {
-        console.error(`[Worker] Failed to process trip ${trip.id}:`, err);
+        console.error(`[Worker] Error processing trip ${trip.id}:`, err.message);
     }
+}
+
+// ─── Trigger Engine ───────────────────────────────────────────────────────────
+
+/**
+ * Evaluates all three trigger conditions in priority order.
+ * Returns { shouldCallAI, reason, currentReliability }.
+ *
+ * Gemini is called at most once per trip per worker cycle.
+ * No weather API is called here — weather is handled inside the Gemini Agent's
+ * analyze_route_segments tool during the deep investigation.
+ */
+async function evaluateTriggers(trip, delayMinutes, liveSlackTimeHours, liveEtaSeconds, liveDistanceMeters, currentLat, currentLng) {
+    // ── Trigger 1: Significant delay (dynamic threshold based on slack) ───────
+    const delayThreshold = computeDelayThreshold(liveSlackTimeHours, trip.deadline_timestamp);
+
+    if (delayMinutes > delayThreshold) {
+        console.log(`[Worker] 🚨 TRIGGER 1 (Delay) fired for Trip ${trip.id}: ${delayMinutes}m > ${delayThreshold}m threshold.`);
+        return { shouldCallAI: true, reason: 'delay', currentReliability: null };
+    }
+
+    // ── Trigger 2: Reliability spike (lightweight traffic-only check) ─────────
+    let currentReliability = null;
+    try {
+        currentReliability = await computeLightweightReliability(trip.polyline, liveDistanceMeters);
+
+        if (currentReliability !== null) {
+            const prevReliability = parseFloat(trip.last_route_reliability) || 0;
+            const delta = currentReliability - prevReliability;
+
+            console.log(`[Worker] 📊 Trip ${trip.id} Reliability: current=${currentReliability.toFixed(3)}, prev=${prevReliability.toFixed(3)}, delta=${delta.toFixed(3)}`);
+
+            if (currentReliability >= RELIABILITY_SPIKE_ABSOLUTE_MIN && delta >= RELIABILITY_SPIKE_DELTA_MIN) {
+                console.log(`[Worker] 🚦 TRIGGER 2 (Risk Spike) fired for Trip ${trip.id}.`);
+                return { shouldCallAI: true, reason: 'risk_spike', currentReliability };
+            }
+        }
+    } catch (err) {
+        // Non-fatal: if lightweight check fails, skip Trigger 2, don't abort the loop.
+        console.warn(`[Worker] Lightweight reliability check failed for trip ${trip.id}: ${err.message}`);
+    }
+
+    // ── Trigger 3: Periodic opportunity scan ─────────────────────────────────
+    const lastAICallAt = trip.last_ai_trigger_at ? new Date(trip.last_ai_trigger_at) : null;
+    const minutesSinceLastAI = lastAICallAt
+        ? (Date.now() - lastAICallAt.getTime()) / 60000
+        : Infinity;
+
+    if (minutesSinceLastAI > OPPORTUNITY_CHECK_INTERVAL_MIN) {
+        console.log(`[Worker] 🔭 TRIGGER 3 (Opportunity) fired for Trip ${trip.id}: ${Math.floor(minutesSinceLastAI)}m since last AI call.`);
+        return { shouldCallAI: true, reason: 'opportunity', currentReliability };
+    }
+
+    console.log(`[Worker] ✅ Trip ${trip.id}: All clear. No triggers fired.`);
+    return { shouldCallAI: false, reason: null, currentReliability };
+}
+
+/**
+ * Computes the dynamic delay threshold in minutes based on available slack.
+ */
+function computeDelayThreshold(liveSlackTimeHours, deadlineTimestamp) {
+    if (!deadlineTimestamp) return DELAY_THRESHOLD_NO_DEADLINE;
+    if (liveSlackTimeHours !== null && liveSlackTimeHours < 0.5) return DELAY_THRESHOLD_TIGHT_SLACK;
+    return DELAY_THRESHOLD_NORMAL_SLACK;
+}
+
+/**
+ * Lightweight reliability check using traffic data for up to 3 sampled segments.
+ * Does NOT call weather API (too slow for a per-cycle check).
+ *
+ * Returns a reliability score (0.0 – 1.5+) or null if not computable.
+ */
+async function computeLightweightReliability(polyline, distanceMeters) {
+    if (!polyline || !distanceMeters) return null;
+
+    const points = decodePolyline(polyline);
+    if (points.length < 2) return null;
+
+    // Dynamic segment size (same formula as in agentTools)
+    const totalDistKm    = distanceMeters / 1000;
+    const segmentSizeKm  = Math.max(8, Math.min(20, totalDistKm * 0.1));
+    const allSegments    = segmentRoute(points, segmentSizeKm);
+
+    if (allSegments.length === 0) return null;
+
+    // Sample up to 3 evenly-spaced segments for a fast check
+    const maxSamples = 3;
+    const step       = Math.max(1, Math.ceil(allSegments.length / maxSamples));
+    const sample     = [];
+    for (let i = 0; i < allSegments.length && sample.length < maxSamples; i += step) {
+        sample.push(allSegments[i]);
+    }
+
+    const trafficDurations = await fetchSegmentTrafficDurations(sample);
+
+    const avgSegmentTime = allSegments.reduce((sum, s) => sum + (s.distance / 1000) * 60, 0) / allSegments.length;
+    if (avgSegmentTime === 0) return null;
+
+    const validDurations = trafficDurations.filter(d => d !== null);
+    if (validDurations.length === 0) return null;
+
+    // Weighted reliability (traffic only — matches 40% avg + 30% max from the full formula)
+    const avgDelayRatio = validDurations.reduce((a, b) => a + b, 0) / (validDurations.length * avgSegmentTime);
+    const maxDelayRatio = Math.max(...validDurations.map(d => d / avgSegmentTime));
+
+    // Scaled to a 0–1.0 score (traffic-only components of the full formula)
+    const reliability = (Math.min(avgDelayRatio - 1, 1.0) * 0.4) + (Math.min(maxDelayRatio - 1, 1.5) * 0.3);
+    return parseFloat(Math.max(0, reliability).toFixed(3));
+}
+
+// ─── AI Evaluation ───────────────────────────────────────────────────────────
+
+/**
+ * Calls the Gemini ReAct Agent and persists its decision.
+ */
+async function runAIEvaluation(trip, delayMinutes, currentLat, currentLng, liveEtaSeconds, liveDistanceMeters, liveSlackTimeHours, triggerReason) {
+    console.log(`[Worker] 🤖 Invoking Gemini Agent for Trip ${trip.id} (reason: ${triggerReason})...`);
+
+    const currentRouteStats = {
+        distance_meters:   liveDistanceMeters,
+        duration_seconds:  liveEtaSeconds,
+        ai_risk_level:     'medium',
+        deadline_timestamp: trip.deadline_timestamp,
+        current_slack_hours: liveSlackTimeHours,
+        polyline:          trip.polyline
+    };
+
+    const decision = await evaluateTripAnomaly(trip, delayMinutes, currentLat, currentLng, currentRouteStats);
+
+    // Record that Gemini was just called and the opportunity check timestamp
+    await pool.query(`
+        UPDATE trips
+        SET last_ai_trigger_at          = CURRENT_TIMESTAMP,
+            ai_trigger_reason           = $1,
+            last_opportunity_check_at   = CURRENT_TIMESTAMP
+        WHERE id = $2
+    `, [triggerReason, trip.id]);
+
+    // Build fresh reasoning string
+    const freshReasoning = (
+        Array.isArray(decision.reasoning)
+            ? decision.reasoning.join(' ')
+            : (decision.reasoning || '')
+    ) + `\n\n(Last Evaluated: ${new Date().toLocaleTimeString()})`;
+
+    if (decision.action === 'reroute' && decision.new_route_id) {
+        await handleReroute(trip, decision, freshReasoning, currentLat, currentLng);
+    } else {
+        console.log(`[Worker] 🛣️  AGENT DECISION: Stay the course for Trip ${trip.id}.`);
+        await pool.query(`
+            UPDATE trips
+            SET ai_reroute_reason = $1, ai_decision = 'stay_course'
+            WHERE id = $2
+        `, [freshReasoning || 'AI evaluated alternatives but staying on current route is optimal.', trip.id]);
+    }
+}
+
+// ─── Reroute Handler ─────────────────────────────────────────────────────────
+
+async function handleReroute(trip, decision, freshReasoning, currentLat, currentLng) {
+    console.log(`[Worker] 🔄 AGENT DECISION: Reroute Trip ${trip.id} → ${decision.new_route_id}`);
+
+    const cachedRoute = getRouteFromCache(decision.new_route_id);
+    let newRouteDbId  = trip.current_route_id; // Fallback: keep existing
+
+    if (!cachedRoute) {
+        console.warn(`[Worker] Route "${decision.new_route_id}" not found in cache. Cannot save geometry.`);
+        return;
+    }
+
+    // Check if this exact geometry is already saved (prevents duplicate route bloat)
+    const existingRes = await pool.query(
+        'SELECT id, route_index FROM routes WHERE trip_id = $1 AND polyline = $2 LIMIT 1',
+        [trip.id, cachedRoute.polyline]
+    );
+
+    if (existingRes.rowCount > 0) {
+        newRouteDbId = existingRes.rows[0].id;
+        console.log(`[Worker] Route already exists (ID: ${newRouteDbId}, Index: ${existingRes.rows[0].route_index}). Reusing.`);
+    } else {
+        // Determine next route letter (A, B, C...)
+        const countRes  = await pool.query('SELECT COUNT(*) AS cnt FROM routes WHERE trip_id = $1', [trip.id]);
+        const nextIndex = String.fromCharCode(65 + parseInt(countRes.rows[0].cnt));
+
+        // Calculate costs
+        const truckMileage = parseFloat(trip.mileage_kmpl) || 4.0;
+        const fuelCost     = (cachedRoute.distance / 1000 / truckMileage) * 90;
+        const totalCost    = fuelCost + (cachedRoute.toll_cost || 0);
+
+        // Stitch old history (origin → current position) with new future path
+        let finalPolyline = cachedRoute.polyline;
+        if (trip.polyline) {
+            const oldPoints      = decodePolyline(trip.polyline);
+            const newPoints      = decodePolyline(cachedRoute.polyline);
+
+            let nearestIndex = 0;
+            let minDist      = Infinity;
+            for (let i = 0; i < oldPoints.length; i++) {
+                const d = Math.sqrt(
+                    Math.pow(oldPoints[i].lat - currentLat, 2) +
+                    Math.pow(oldPoints[i].lng - currentLng, 2)
+                );
+                if (d < minDist) { minDist = d; nearestIndex = i; }
+            }
+
+            const stitched = [...oldPoints.slice(0, nearestIndex), ...newPoints];
+            finalPolyline  = encodePolyline(stitched);
+            console.log(`[Worker] Stitched polyline (${nearestIndex} history pts + ${newPoints.length} new pts).`);
+        }
+
+        const insertRes = await pool.query(`
+            INSERT INTO routes
+                (trip_id, route_index, polyline, distance_meters, duration_seconds,
+                 has_tolls, toll_cost, is_ai_recommended, ai_total_cost_inr, ai_fuel_cost_inr, ai_risk_level)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $8, $9, 'low')
+            RETURNING id
+        `, [
+            trip.id, nextIndex, finalPolyline,
+            cachedRoute.distance, cachedRoute.duration,
+            cachedRoute.has_tolls || false, cachedRoute.toll_cost || 0,
+            totalCost, fuelCost
+        ]);
+
+        newRouteDbId = insertRes.rows[0].id;
+        console.log(`[Worker] New route saved (ID: ${newRouteDbId}, Index: ${nextIndex}).`);
+    }
+
+    // Update the trip record
+    await pool.query(`
+        UPDATE trips
+        SET ai_reroute_reason = $1,
+            current_route_id  = $2,
+            ai_decision       = 'reroute',
+            live_eta_seconds  = $3
+        WHERE id = $4
+    `, [freshReasoning, newRouteDbId, cachedRoute.duration, trip.id]);
 }

@@ -37,6 +37,15 @@ function formatDuration(value) {
     return `${Math.max(1, minutes)}m`;
 }
 
+function formatArrivalTime(value) {
+    const totalSeconds = Number(value);
+    if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+        return 'N/A';
+    }
+    const arrivalDate = new Date(Date.now() + totalSeconds * 1000);
+    return arrivalDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 function formatDistanceMeters(value) {
     const numericValue = Number(value);
 
@@ -198,12 +207,17 @@ function buildTripInfoHtml(trip) {
                     <span style="color: #6b7280; font-weight: 600; text-transform: uppercase; font-size: 9px; letter-spacing: 0.05em; display: block; margin-bottom: 1px;">To</span>
                     <span style="font-weight: 500;">${escapeHtml(destinationLabel)}</span>
                 </div>
-                <div style="margin-top: 4px; padding-top: 8px; border-top: 1px dashed #eee; display: flex; justify-content: space-between; align-items: center;">
-                    <div style="font-size: 11px; font-weight: 700; color: #aa3000;">
-                        ${escapeHtml(formatDistanceMeters(trip?.route?.distance_meters))}
+                <div style="margin-top: 4px; padding-top: 8px; border-top: 1px dashed #eee; display: flex; flex-direction: column; gap: 4px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div style="font-size: 11px; font-weight: 700; color: #aa3000;">
+                            ${escapeHtml(formatDistanceMeters(trip?.route?.distance_meters))}
+                        </div>
+                        <div style="font-size: 11px; font-weight: 800; color: #1a1c1e;">
+                            Arrival: ${escapeHtml(formatArrivalTime(trip?.route?.duration_seconds))}
+                        </div>
                     </div>
-                    <div style="font-size: 11px; font-weight: 500; color: #6b7280;">
-                        ${escapeHtml(formatDuration(trip?.route?.duration_seconds))}
+                    <div style="font-size: 10px; font-weight: 500; color: #6b7280; text-align: right;">
+                        ${escapeHtml(formatDuration(trip?.route?.duration_seconds))} remaining
                     </div>
                 </div>
                 ${trip?.route?.is_ai_recommended ? `

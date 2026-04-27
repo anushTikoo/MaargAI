@@ -63,7 +63,6 @@ CREATE TABLE trips (
     last_notified_route_id INT,
     last_gps_lat DOUBLE PRECISION,
     last_gps_lng DOUBLE PRECISION,
-    simulated_delay_seconds INT DEFAULT 0,
     last_checked_at TIMESTAMP,
     ai_reroute_reason TEXT,
     ai_decision VARCHAR(20),

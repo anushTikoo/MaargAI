@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getTrucksForCurrentUser } from '../services/trucksService';
 import { createTripForCurrentUser, deleteTripForCurrentUser, getTripsForCurrentUser } from '../services/tripsService';
-import { injectDelay, resetSimulation } from '../services/simulationService';
 
 const PLACES_SEARCH_DEBOUNCE_MS = 1000;
 const GOOGLE_PLACES_API_KEY = import.meta.env.VITE_GOOGLE_PLACES_API_KEY;
@@ -140,6 +139,15 @@ function formatEtaSeconds(value) {
     }
 
     return `${roundedSeconds}s`;
+}
+
+function formatArrivalTime(value) {
+    const totalSeconds = Number(value);
+    if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+        return 'N/A';
+    }
+    const arrivalDate = new Date(Date.now() + totalSeconds * 1000);
+    return arrivalDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function getValidTimestamp(value) {
@@ -482,30 +490,6 @@ export default function Shipments() {
         }
     };
 
-    const handleInjectDelay = async (tripId, minutes) => {
-        try {
-            setSimulatingTripId(tripId);
-            await injectDelay(tripId, minutes);
-            // Give the backend Agent time to execute ReAct loop before refreshing
-            setTimeout(() => refreshTrips(), 6000); 
-        } catch (error) {
-            setTripsError(error?.message || 'Unable to inject delay.');
-            setSimulatingTripId(null);
-        }
-    };
-
-    const handleResetSimulation = async (tripId) => {
-        try {
-            setSimulatingTripId(tripId);
-            await resetSimulation(tripId);
-            await refreshTrips();
-        } catch (error) {
-            setTripsError(error?.message || 'Unable to reset simulation.');
-        } finally {
-            setSimulatingTripId(null);
-        }
-    };
-
     const handleAddShipment = async () => {
         setFormError('');
         setFormSuccess('');
@@ -679,12 +663,18 @@ export default function Shipments() {
                                                         </div>
                                                     ) : (
                                                         <>
-                                                            <p className="text-[0.7rem] font-black uppercase tracking-[0.12em] text-secondary mb-1">ETA</p>
-                                                            <div className="flex items-end gap-2">
-                                                                <span className="material-symbols-outlined text-primary text-[1.15rem]">timer</span>
-                                                                <span className="text-2xl font-black text-on-surface leading-none">
-                                                                    {formatEtaSeconds(trip.live_eta_seconds || trip.current_route_duration_seconds || trip.baseline_eta_seconds).replace(/ \d+s$/, '').replace(/^\d+s$/, '< 1m')}
-                                                                </span>
+                                                            <p className="text-[0.7rem] font-black uppercase tracking-[0.12em] text-secondary mb-1">Expected Arrival</p>
+                                                            <div className="flex flex-col gap-1">
+                                                                <div className="flex items-end gap-2">
+                                                                    <span className="material-symbols-outlined text-primary text-[1.15rem]">schedule</span>
+                                                                    <span className="text-2xl font-black text-on-surface leading-none">
+                                                                        {formatArrivalTime(trip.live_eta_seconds || trip.current_route_duration_seconds || trip.baseline_eta_seconds)}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="flex items-center gap-1.5 text-[0.65rem] text-secondary font-bold uppercase tracking-wider ml-1">
+                                                                    <span className="material-symbols-outlined text-[0.85rem]">timer</span>
+                                                                    {formatEtaSeconds(trip.live_eta_seconds || trip.current_route_duration_seconds || trip.baseline_eta_seconds).replace(/ \d+s$/, '').replace(/^\d+s$/, '< 1m')} remaining
+                                                                </div>
                                                             </div>
                                                         </>
                                                     )}
@@ -830,38 +820,6 @@ export default function Shipments() {
                                                         </div>
                                                     </div>
                                                 )}
-                                                
-                                                <div className="flex flex-wrap items-center gap-3">
-                                                    <span className="text-xs font-bold text-secondary uppercase tracking-wider">Demo Control:</span>
-                                                    
-                                                    {trip.simulated_delay_seconds > 0 && (
-                                                        <span className="inline-flex items-center gap-1.5 rounded-md bg-red-100 px-2 py-1 text-xs font-bold text-red-700 animate-pulse border border-red-200">
-                                                            <span className="material-symbols-outlined text-[1rem]">warning</span>
-                                                            +{formatEtaSeconds(trip.simulated_delay_seconds)} Simulated Delay
-                                                        </span>
-                                                    )}
-
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleInjectDelay(trip.id, 20)}
-                                                        disabled={simulatingTripId === trip.id}
-                                                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-amber-100 px-3 py-1.5 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-200 disabled:opacity-50"
-                                                    >
-                                                        <span className="material-symbols-outlined text-[1.1rem]">
-                                                            {simulatingTripId === trip.id ? 'hourglass_top' : 'traffic'}
-                                                        </span>
-                                                        Inject Traffic & Warp Location
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleResetSimulation(trip.id)}
-                                                        disabled={simulatingTripId === trip.id}
-                                                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-surface-container-low border border-outline-variant/20 px-3 py-1.5 text-xs font-bold text-secondary transition-colors hover:bg-surface-container hover:text-on-surface disabled:opacity-50"
-                                                    >
-                                                        <span className="material-symbols-outlined text-[1.1rem]">refresh</span>
-                                                        Reset
-                                                    </button>
-                                                </div>
                                             </div>
                                         )}
                                     </div>

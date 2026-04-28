@@ -66,7 +66,12 @@ function robustParseJSON(text) {
  * @returns {string} The full prompt string
  */
 function buildPrompt(routes) {
-    const routeJson = JSON.stringify(routes, null, 2);
+    // Filter out internal fields (starting with _) before sending to Gemini
+    const sanitizedRoutes = routes.map(r => {
+        const { _duration_seconds, _distance_meters, _traffic_adjusted_duration, ...rest } = r;
+        return rest;
+    });
+    const routeJson = JSON.stringify(sanitizedRoutes, null, 2);
 
     return `You are an expert logistics route decision engine for commercial heavy freight operations.
 
@@ -79,7 +84,7 @@ ${routeJson}
 
 FIELD DEFINITIONS:
 - id: Route identifier (A, B, C, etc.)
-- eta_hours: Estimated hours to reach destination (lower is better)
+- duration_hours: Estimated hours to reach destination INCLUDING LIVE TRAFFIC (lower is better)
 - fuel_cost_inr: Fuel cost in Indian Rupees (lower is better)
 - toll_cost_inr: Toll cost in INR; null means "not available" (treat conservatively as potentially high)
 - reliability_score: Composite risk score (0.0 = perfect, 1.3+ = extreme risk). Lower is ALWAYS better.
@@ -99,7 +104,7 @@ RESPONSE FORMAT — Respond ONLY with valid JSON, no markdown, no explanation ou
 {
   "selected_route": "<route_id>",
   "reasoning": [
-    "<specific reason 1 referencing actual numbers. IDENTIFY ROUTES BY THEIR DURATION (e.g. 'the 3h 15m route') instead of IDs.>",
+    "<specific reason 1 referencing actual numbers. IDENTIFY ROUTES BY THEIR ID AND DURATION (e.g. 'Route B (4h 12m)') instead of just IDs.>",
     "<specific reason 2 referencing actual numbers>",
     "<specific reason 3 referencing actual numbers>"
   ],

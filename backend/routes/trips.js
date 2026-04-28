@@ -592,7 +592,8 @@ async function enrichTripSegments(tripId) {
                 + (avgWeather * 0.10) + (maxWeather * 0.30)).toFixed(3)
             );
 
-            const etaHours = parseFloat((r.duration_seconds * avgDelay / 3600).toFixed(2));
+            const etaSeconds = Math.round(r.duration_seconds * avgDelay);
+            const etaHours = parseFloat((etaSeconds / 3600).toFixed(2));
             const fuelCostInr = parseFloat(((r.distance_meters / 1000 / mileageKmpl) * FUEL_PRICE).toFixed(2));
             const tollCostInr = r.has_tolls
                 ? (parseFloat(r.toll_cost) > 0 ? parseFloat(r.toll_cost) : null)
@@ -600,18 +601,22 @@ async function enrichTripSegments(tripId) {
 
             let slackHours = null;
             if (deadlineTs) {
-                const adjustedDurMs = r.duration_seconds * avgDelay * 1000;
+                const adjustedDurMs = etaSeconds * 1000;
                 const eta = new Date(Date.now() + adjustedDurMs);
                 slackHours = parseFloat(((new Date(deadlineTs) - eta) / 3600000).toFixed(2));
             }
 
             return {
                 id: r.route_index,
-                eta_hours: etaHours,
+                duration_hours: etaHours,
                 fuel_cost_inr: fuelCostInr,
                 toll_cost_inr: tollCostInr,
                 reliability_score: reliability,
-                slack_time_hours: slackHours
+                slack_time_hours: slackHours,
+                // Internal fields for DB update
+                _duration_seconds: r.duration_seconds,
+                _distance_meters: r.distance_meters,
+                _traffic_adjusted_duration: etaSeconds
             };
         });
 
@@ -657,9 +662,16 @@ async function enrichTripSegments(tripId) {
                      ai_decision = 'stay_course', 
                      ai_reroute_reason = $2,
                      live_eta_seconds = $3,
-                     live_distance_meters = $4
+                     live_distance_meters = $4,
+                     last_ai_trigger_at = CURRENT_TIMESTAMP
                  WHERE id = $5`,
-                [winner.id, fullReasoning, winner.duration_seconds, winner.distance_meters, tripId]
+                [
+                    winnerRes.rows[0].id, 
+                    fullReasoning, 
+                    geminiPayload.find(p => p.id === selectedIndex)?._traffic_adjusted_duration || winnerRes.rows[0].duration_seconds, 
+                    geminiPayload.find(p => p.id === selectedIndex)?._distance_meters || winnerRes.rows[0].distance_meters, 
+                    tripId
+                ]
             );
         }
 

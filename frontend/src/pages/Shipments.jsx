@@ -787,7 +787,7 @@ export default function Shipments() {
                                                 Deadline: {formatDateLabel(trip.deadline_timestamp)}
                                             </span>
                                             {trip.status !== 'not started' && (
-                                                trip.current_route_is_ai_recommended ? (
+                                                (trip.current_route_is_ai_recommended || trip.ai_decision) ? (
                                                     <>
                                                         <span className="inline-flex items-center gap-2 rounded-full bg-surface-container-low px-3 py-1 text-xs font-semibold text-secondary border border-outline-variant/20">
                                                             <span className="material-symbols-outlined text-[0.95rem]">straighten</span>
@@ -932,7 +932,9 @@ export default function Shipments() {
                                                         <div className="flex flex-wrap gap-x-6 gap-y-2">
                                                             <div className="flex flex-col">
                                                                 <span className="text-[10px] text-secondary font-bold uppercase tracking-wider">Last Run</span>
-                                                                <span className="text-xs font-black text-on-surface">{formatTime24h(trip.last_checked_at)}</span>
+                                                                <span className="text-xs font-black text-on-surface">
+                                                                    {trip.last_ai_trigger_at ? formatTime24h(trip.last_ai_trigger_at) : 'Waiting...'}
+                                                                </span>
                                                             </div>
                                                             <div className="flex flex-col">
                                                                 <span className="text-[10px] text-secondary font-bold uppercase tracking-wider">ETA Sync</span>

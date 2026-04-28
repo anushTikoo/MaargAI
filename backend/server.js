@@ -46,7 +46,7 @@ let lastWorkerStats = {
 app.get('/api/worker/status', (req, res) => {
   res.json({
     worker_name: 'MaargAI Internal Monitoring Loop',
-    interval: '2 minutes',
+    interval: '1 minute',
     ...lastWorkerStats
   });
 });

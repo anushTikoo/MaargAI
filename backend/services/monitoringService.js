@@ -39,6 +39,7 @@ export async function processActiveTrips() {
             WHERE t.status = 'active'
               AND t.current_route_id IS NOT NULL
               AND t.ai_decision IS NOT NULL
+              AND (t.last_checked_at IS NULL OR t.last_checked_at < NOW() - INTERVAL '1 minute')
         `);
 
         console.log(`[Worker] Found ${trips.length} active trip(s) to process.`);

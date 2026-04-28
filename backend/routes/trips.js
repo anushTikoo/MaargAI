@@ -564,6 +564,7 @@ async function enrichTripSegments(tripId) {
                 r.duration_seconds,
                 r.has_tolls,
                 r.toll_cost,
+                COALESCE(SUM(ts.duration_in_traffic_seconds), null) AS total_traffic_duration,
                 COALESCE(AVG(ts.delay_ratio), null)        AS avg_delay,
                 COALESCE(AVG(ts.weather_score), null)      AS avg_weather,
                 COALESCE(MAX(ts.weather_score), null)      AS max_weather,
@@ -592,7 +593,9 @@ async function enrichTripSegments(tripId) {
                 + (avgWeather * 0.10) + (maxWeather * 0.30)).toFixed(3)
             );
 
-            const etaSeconds = Math.round(r.duration_seconds * avgDelay);
+            const etaSeconds = r.total_traffic_duration 
+                ? parseInt(r.total_traffic_duration) 
+                : Math.round(r.duration_seconds * avgDelay);
             const etaHours = parseFloat((etaSeconds / 3600).toFixed(2));
             const fuelCostInr = parseFloat(((r.distance_meters / 1000 / mileageKmpl) * FUEL_PRICE).toFixed(2));
             const tollCostInr = r.has_tolls
@@ -667,7 +670,7 @@ async function enrichTripSegments(tripId) {
                      ai_reroute_reason = $2,
                      live_eta_seconds = $3,
                      live_distance_meters = $4,
-                     last_ai_trigger_at = CURRENT_TIMESTAMP
+                     last_checked_at = CURRENT_TIMESTAMP
                  WHERE id = $5`,
                 [
                     winnerRes.rows[0].id, 

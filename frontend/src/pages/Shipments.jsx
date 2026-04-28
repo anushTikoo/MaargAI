@@ -933,7 +933,7 @@ export default function Shipments() {
                                                             <div className="flex flex-col">
                                                                 <span className="text-[10px] text-secondary font-bold uppercase tracking-wider">Last Run</span>
                                                                 <span className="text-xs font-black text-on-surface">
-                                                                    {trip.last_checked_at ? formatTime24h(trip.last_checked_at) : 'N/A'}
+                                                                    {trip.last_checked_at ? formatTime24h(trip.last_checked_at) : 'Waiting...'}
                                                                 </span>
                                                             </div>
                                                             <div className="flex flex-col">

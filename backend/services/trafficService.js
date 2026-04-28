@@ -8,7 +8,7 @@ const ROUTES_MATRIX_URL = 'https://routes.googleapis.com/distanceMatrix/v2:compu
 // Limit imposed by the API when using TRAFFIC_AWARE: origins × destinations ≤ 625
 // For TRAFFIC_AWARE_OPTIMAL: origins × destinations ≤ 100
 // Since we use strict 1-to-1 pairs (N×1 each), a single batch of up to 100 segments is safe.
-const MAX_BATCH_SIZE = 50;
+const MAX_BATCH_SIZE = 25;
 
 /**
  * Fetch with-traffic durations for a list of strict 1-to-1 segment pairs

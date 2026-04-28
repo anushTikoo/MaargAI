@@ -667,13 +667,15 @@ async function enrichTripSegments(tripId) {
                      ai_reroute_reason = $2,
                      live_eta_seconds = $3,
                      live_distance_meters = $4,
-                     last_checked_at = CURRENT_TIMESTAMP
+                     last_checked_at = CURRENT_TIMESTAMP,
+                     baseline_eta_seconds = $3,
+                     created_at = CURRENT_TIMESTAMP
                  WHERE id = $5`,
                 [
                     winnerRes.rows[0].id, 
                     fullReasoning, 
-                    geminiPayload.find(p => p.id === selectedIndex)?._traffic_adjusted_duration || winnerRes.rows[0].duration_seconds, 
-                    geminiPayload.find(p => p.id === selectedIndex)?._distance_meters || winnerRes.rows[0].distance_meters, 
+                    Math.round(geminiPayload.find(p => p.id === selectedIndex)?._traffic_adjusted_duration || winnerRes.rows[0].duration_seconds), 
+                    Math.round(geminiPayload.find(p => p.id === selectedIndex)?._distance_meters || winnerRes.rows[0].distance_meters), 
                     tripId
                 ]
             );
@@ -1174,6 +1176,14 @@ router.post('/create-trip', async (req, res) => {
             let fetchedRoutes = [];
             try {
                 fetchedRoutes = await getRoutes(source_lat, source_lng, dest_lat, dest_lng);
+                
+                // Prototype Guard: Check if any route is too long for the matrix API limits (625)
+                if (fetchedRoutes.some(r => r.distanceMeters > 1000000)) {
+                    await client.query('ROLLBACK');
+                    return res.status(400).json({ 
+                        error: "Route too long! This prototype only supports distances up to 1000km due to Google Routes Matrix limits (625 elements)." 
+                    });
+                }
             } catch (routeErr) {
                 console.error("Failed to fetch routes from Google API:", routeErr);
 

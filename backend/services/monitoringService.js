@@ -68,56 +68,62 @@ async function processSingleTrip(trip) {
     const currentLng = parseFloat(trip.last_gps_lng);
 
     try {
-        // ── Step 1: Get live ETA specifically for the ASSIGNED route ──────────
+        // ── Step 1: Detect if truck is on path ───────────────────────────────
         const pathAnalysis = getDistanceToPolyline(currentLat, currentLng, trip.polyline);
         const isDeviated = !pathAnalysis.isNear;
 
-        let liveEtaSeconds = trip.route_duration; // Baseline fallback
-        let liveDistanceMeters = trip.route_distance;
+        // ── Step 1.1: Get global ETA (for dashboard sync) ────────────────────
+        const routes = await getRoutes(currentLat, currentLng, trip.dest_lat, trip.dest_lng);
+        if (!routes || routes.length === 0) {
+            console.warn(`[Worker] No routing data returned for trip ${trip.id}.`);
+            return;
+        }
 
+        // ── Step 1.2: Refresh segment-level data (for AI reasoning) ──────────
+        // Even though we use the global ETA for the dashboard, we MUST update 
+        // the segments so the AI has fresh data for its deep investigations.
+        let matchedRoute = null;
         if (!isDeviated && trip.polyline) {
             try {
                 const points = decodePolyline(trip.polyline);
                 const remainingPoints = points.slice(pathAnalysis.nearestIndex);
                 
-                // Calculate remaining distance purely from polyline
-                liveDistanceMeters = remainingPoints.reduce((sum, p, i) => 
-                    i === 0 ? 0 : sum + calculateDistanceMeters(remainingPoints[i-1], remainingPoints[i]), 0);
-
-                // For a highly accurate ETA on the SAME route, we segment the remaining path 
-                // and fetch current traffic for those specific segments.
-                const remainingSegments = segmentRoute(remainingPoints, 12); // ~12km segments
+                // Refresh traffic for segments
+                const remainingSegments = segmentRoute(remainingPoints, 12);
                 if (remainingSegments.length > 0) {
                     const trafficDurations = await fetchSegmentTrafficDurations(remainingSegments);
-                    const validDurations = trafficDurations.filter(d => d !== null);
                     
-                    if (validDurations.length > 0) {
-                        // We use the traffic data for the segments we could fetch, 
-                        // and estimate the rest (if any) using the ratio.
-                        const sumTraffic = validDurations.reduce((a, b) => a + b, 0);
-                        const coverageRatio = validDurations.length / remainingSegments.length;
-                        liveEtaSeconds = Math.round(sumTraffic / coverageRatio);
-                        
-                        console.log(`[Worker] Trip ${trip.id}: Live ETA updated using ${validDurations.length}/${remainingSegments.length} segments of assigned route.`);
+                    // Update segment table for the AI
+                    for (let i = 0; i < remainingSegments.length; i++) {
+                        const dur = trafficDurations[i];
+                        if (dur !== null) {
+                            // We use a heuristic update here to keep the trip_segments table fresh
+                            // for the Gemini Agent's tools.
+                            await pool.query(
+                                `UPDATE trip_segments SET duration_in_traffic_seconds = $1, traffic_checked_at = NOW()
+                                 WHERE route_id = $2 AND segment_index = $3`,
+                                [dur, trip.current_route_id, i + pathAnalysis.nearestIndex]
+                            );
+                        }
                     }
+                    console.log(`[Worker] Trip ${trip.id}: Refreshed ${trafficDurations.filter(d => d !== null).length} segments for AI.`);
                 }
+
+                // Match global route for the ETA
+                matchedRoute = routes.find(r => {
+                    const expectedRemainingMeters = remainingPoints.reduce((sum, p, i) => 
+                        i === 0 ? 0 : sum + calculateDistanceMeters(remainingPoints[i-1], remainingPoints[i]), 0);
+                    const tolerance = Math.max(500, expectedRemainingMeters * 0.15);
+                    return Math.abs(r.distanceMeters - expectedRemainingMeters) < tolerance;
+                });
             } catch (err) {
-                console.warn(`[Worker] Failed to compute route-specific ETA for trip ${trip.id}:`, err.message);
-                // Fallback: use a basic distance-based estimate or the fastest Google route
-                const routes = await getRoutes(currentLat, currentLng, trip.dest_lat, trip.dest_lng);
-                if (routes.length > 0) {
-                    liveEtaSeconds = routes[0].durationSeconds;
-                    liveDistanceMeters = routes[0].distanceMeters;
-                }
-            }
-        } else {
-            // If deviated, we HAVE to ask Google for a new route to the destination
-            const routes = await getRoutes(currentLat, currentLng, trip.dest_lat, trip.dest_lng);
-            if (routes.length > 0) {
-                liveEtaSeconds = routes[0].durationSeconds;
-                liveDistanceMeters = routes[0].distanceMeters;
+                console.warn(`[Worker] Segment refresh failed for trip ${trip.id}:`, err.message);
             }
         }
+        
+        const selectedRouteLive = matchedRoute || routes[0];
+        const liveEtaSeconds = selectedRouteLive.durationSeconds;
+        const liveDistanceMeters = selectedRouteLive.distanceMeters;
 
         // ── Step 2: Calculate delay & slack ──────────────────────────────────
         // Delay = current Google ETA − how much time was still budgeted at this moment.
@@ -157,7 +163,15 @@ async function processSingleTrip(trip) {
                 live_distance_meters  = $2,
                 live_slack_time_hours = $3
             WHERE id = $4
-        `, [liveEtaSeconds, liveDistanceMeters, liveSlackTimeHours, trip.id]);
+        `, [Math.round(liveEtaSeconds), Math.round(liveDistanceMeters), liveSlackTimeHours, trip.id]);
+
+        // Also update the routes table so navigation links stay in sync
+        await pool.query(`
+            UPDATE routes
+            SET duration_seconds = $1,
+                distance_meters  = $2
+            WHERE id = $3
+        `, [Math.round(liveEtaSeconds), Math.round(liveDistanceMeters), selectedRouteLive.id]);
 
         // ── Step 4: PROACTIVE TRIGGER ENGINE ─────────────────────────────────
 

@@ -847,7 +847,7 @@ router.post('/locations', async (req, res) => {
             const activateTripResult = await pool.query(
                 `UPDATE trips
                  SET status = 'active',
-                     activated_at = CURRENT_TIMESTAMP
+                     last_checked_at = CURRENT_TIMESTAMP
                  WHERE id = $1
                  RETURNING status`,
                 [tripId]

@@ -585,6 +585,51 @@ export default function Shipments() {
                     </p>
                 </div>
 
+                {/* Driver App Onboarding Card */}
+                <div className="bg-linear-to-br from-green-50 to-emerald-50/30 border border-green-200/50 rounded-2xl p-6 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6 overflow-hidden relative group">
+                    <div className="absolute -right-8 -top-8 w-32 h-32 bg-green-500/5 rounded-full blur-3xl group-hover:bg-green-500/10 transition-colors"></div>
+                    
+                    <div className="flex items-start gap-5 relative z-10">
+                        <div className="w-14 h-14 bg-green-500 rounded-2xl flex items-center justify-center shadow-lg shadow-green-500/20 shrink-0">
+                            <span className="material-symbols-outlined text-white text-3xl">install_mobile</span>
+                        </div>
+                        <div>
+                            <h3 className="text-xl font-bold text-green-900 flex items-center gap-2">
+                                ConsTracker App
+                                <span className="bg-green-500/10 text-green-700 text-[10px] font-black uppercase px-2 py-0.5 rounded-full border border-green-500/20">
+                                    v1.0.0
+                                </span>
+                            </h3>
+                            <p className="text-green-800/70 text-sm max-w-md mt-1 font-medium">
+                                Distribute the companion app to your drivers to enable real-time AI telemetry and automated route deviations.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 w-full md:w-auto relative z-10">
+                        <button
+                            onClick={() => {
+                                const link = `${window.location.origin}/constracker-app-apk.apk`;
+                                navigator.clipboard.writeText(link);
+                                // Optional: You could add a toast here if you have a toast system
+                                alert("Download link copied to clipboard!");
+                            }}
+                            className="flex-1 md:flex-none px-5 py-2.5 rounded-xl border border-green-200 bg-white text-green-700 font-bold text-sm flex items-center justify-center gap-2 hover:bg-green-50 transition-all cursor-pointer"
+                        >
+                            <span className="material-symbols-outlined text-[1.2rem]">content_copy</span>
+                            Copy Link
+                        </button>
+                        <a
+                            href="/constracker-app-apk.apk"
+                            download="ConsTracker-v1.0.apk"
+                            className="flex-1 md:flex-none px-6 py-2.5 rounded-xl bg-green-600 text-white font-bold text-sm flex items-center justify-center gap-2 hover:bg-green-700 transition-all shadow-lg shadow-green-600/20 cursor-pointer no-underline"
+                        >
+                            <span className="material-symbols-outlined text-[1.2rem]">download</span>
+                            Download APK
+                        </a>
+                    </div>
+                </div>
+
                 <div className="bg-surface-container-lowest border border-outline-variant/20 rounded-xl p-8 shadow-sm">
                     <div className="flex items-center justify-between gap-4 mb-6">
                         <div>

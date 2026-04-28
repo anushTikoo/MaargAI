@@ -25,7 +25,13 @@ function App() {
   const [isTracking, setIsTracking] = useState(false);
   const [status, setStatus] = useState('Tracking is idle');
   const [location, setLocation] = useState<{latitude: number; longitude: number} | null>(null);
+  const [postLog, setPostLog] = useState<string>('');
 
+  const updatePostLog = (lat: number, lng: number) => {
+    const now = new Date();
+    const timeString = now.toLocaleTimeString('en-US', { hour12: false });
+    setPostLog(`Sent post request at ${timeString} with Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}`);
+  };
   // Server-sent notification state
   const [notification, setNotification] = useState<{
     message: string | null;
@@ -51,6 +57,7 @@ function App() {
     manualIntervalRef.current = setInterval(() => {
       void sendLocation(userId, lat, lng)
         .then((result) => {
+          updatePostLog(lat, lng);
           if (result?.message || result?.link) {
             setNotification(result);
           }
@@ -70,11 +77,11 @@ function App() {
 
   const handleSetUserId = () => {
     if (userId.trim().length === 0) {
-      setStatus('Please enter a valid user ID');
+      setStatus('Please enter a valid license plate number');
       return;
     }
     setUserIdSet(true);
-    setStatus('User ID set. Ready to track.');
+    setStatus('License plate set. Ready to track.');
   };
 
   const handleStartStopTracking = async () => {
@@ -100,6 +107,7 @@ function App() {
         userId,
         ({latitude, longitude}: {latitude: number; longitude: number}) => {
           setLocation({latitude, longitude});
+          updatePostLog(latitude, longitude);
           setIsTracking(true);
           setStatus('Live tracking active');
         },
@@ -142,6 +150,7 @@ function App() {
     setIsSendingManual(true);
     try {
       const result = await sendLocation(userId, lat, lng);
+      updatePostLog(lat, lng);
       startManualLocationLoop(lat, lng);
       // Update the displayed location with the manually entered values
       setLocation({latitude: lat, longitude: lng});
@@ -183,14 +192,14 @@ function App() {
             <Text style={styles.kicker}>Constracker</Text>
             <Text style={styles.title}>Live location tracking</Text>
             <Text style={styles.subtitle}>
-              Enter a unique identifier so we can track you with other users.
+              Enter a license plate number so we can track your vehicle.
             </Text>
 
             <View style={styles.card}>
-              <Text style={styles.cardLabel}>Your User ID</Text>
+              <Text style={styles.cardLabel}>License Plate Number</Text>
               <TextInput
                 style={styles.textInput}
-                placeholder="e.g., john_doe, user_123"
+                placeholder="e.g., ABC-1234"
                 placeholderTextColor="#64748b"
                 value={userId}
                 onChangeText={setUserId}
@@ -200,12 +209,12 @@ function App() {
             <Pressable
               onPress={handleSetUserId}
               style={({pressed}) => [styles.button, styles.buttonStart, pressed && styles.buttonPressed]}>
-              <Text style={styles.buttonText}>Set ID and Continue</Text>
+              <Text style={styles.buttonText}>Set Plate and Continue</Text>
             </Pressable>
 
             <Text style={styles.footer}>
-              This ID will be sent with each location update so your backend can
-              identify which user is being tracked.
+              This license plate will be sent with each location update so your backend can
+              identify which vehicle is being tracked.
             </Text>
           </View>
         </SafeAreaView>
@@ -228,7 +237,7 @@ function App() {
           <Text style={styles.kicker}>Constracker</Text>
           <Text style={styles.title}>Live location tracking</Text>
           <Text style={styles.subtitle}>
-            Tracking as: <Text style={styles.userId}>{userId}</Text>
+            Tracking plate: <Text style={styles.userId}>{userId}</Text>
           </Text>
 
           {/* Status card */}
@@ -247,6 +256,14 @@ function App() {
             <Text style={styles.cardLabel}>Current location</Text>
             <Text style={styles.cardValue}>{locationLabel}</Text>
           </View>
+
+          {/* Post Log card */}
+          {postLog ? (
+            <View style={styles.card}>
+              <Text style={styles.cardLabel}>Last Request</Text>
+              <Text style={styles.cardValue}>{postLog}</Text>
+            </View>
+          ) : null}
 
           {/* ── Feature 1: Server notification banner ── */}
           {notification && (

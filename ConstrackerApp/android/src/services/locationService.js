@@ -103,7 +103,7 @@ export async function startLocationTracking(token, onLocation, onError, onNotifi
   const normalizedToken = token?.trim();
 
   if (!normalizedToken) {
-    throw new Error('User ID is required to start tracking');
+    throw new Error('License plate number is required to start tracking');
   }
 
   if (BackgroundService.isRunning()) {

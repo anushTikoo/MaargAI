@@ -917,9 +917,10 @@ router.post('/locations', async (req, res) => {
         let googleMapsUrl = null;
         let isActuallyOptimized = !!tripResult.rows[0].is_ai_recommended;
 
-        // ONLY provide navigation if the route is AI-recommended and verified.
-        // This prevents the "baseline" (Route A) from being sent before AI analysis finishes.
-        const canProvideNavigation = !!(currentRouteId && tripResult.rows[0].polyline && isActuallyOptimized);
+        // ONLY provide navigation if a route is actually assigned (AI has finished).
+        // We no longer check isActuallyOptimized here because we want to keep guidance
+        // even if the truck deviates slightly (which makes isActuallyOptimized false).
+        const canProvideNavigation = !!(currentRouteId && tripResult.rows[0].polyline);
 
         // NEW: Instant Deviation Check. 
         // If the truck is >500m away from the assigned polyline, it's not "AI Optimized" anymore.

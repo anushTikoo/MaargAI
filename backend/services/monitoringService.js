@@ -109,13 +109,29 @@ async function processSingleTrip(trip) {
                     console.log(`[Worker] Trip ${trip.id}: Refreshed ${trafficDurations.filter(d => d !== null).length} segments for AI.`);
                 }
 
-                // Match global route for the ETA
-                matchedRoute = routes.find(r => {
-                    const expectedRemainingMeters = remainingPoints.reduce((sum, p, i) => 
-                        i === 0 ? 0 : sum + calculateDistanceMeters(remainingPoints[i-1], remainingPoints[i]), 0);
-                    const tolerance = Math.max(500, expectedRemainingMeters * 0.15);
-                    return Math.abs(r.distanceMeters - expectedRemainingMeters) < tolerance;
-                });
+                // Match Google route to the AI-chosen polyline by finding the CLOSEST
+                // distance match (not the first within tolerance). Google sorts routes
+                // fastest-first, so .find() would always pick the shortest/fastest route.
+                const expectedRemainingMeters = remainingPoints.reduce((sum, p, i) => 
+                    i === 0 ? 0 : sum + calculateDistanceMeters(remainingPoints[i-1], remainingPoints[i]), 0);
+                
+                let bestMatchDiff = Infinity;
+                for (const r of routes) {
+                    const diff = Math.abs(r.distanceMeters - expectedRemainingMeters);
+                    if (diff < bestMatchDiff) {
+                        bestMatchDiff = diff;
+                        matchedRoute = r;
+                    }
+                }
+                
+                // Only accept if within 5% — any wider and we risk matching a different road
+                const matchTolerance = Math.max(500, expectedRemainingMeters * 0.05);
+                if (bestMatchDiff > matchTolerance) {
+                    console.log(`[Worker] Trip ${trip.id}: Best match diff=${Math.round(bestMatchDiff)}m > tolerance=${Math.round(matchTolerance)}m — rejecting match.`);
+                    matchedRoute = null;
+                } else {
+                    console.log(`[Worker] Trip ${trip.id}: Matched route (diff=${Math.round(bestMatchDiff)}m, expected=${Math.round(expectedRemainingMeters)}m, got=${matchedRoute.distanceMeters}m).`);
+                }
             } catch (err) {
                 console.warn(`[Worker] Segment refresh failed for trip ${trip.id}:`, err.message);
             }

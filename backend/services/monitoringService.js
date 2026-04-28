@@ -148,30 +148,38 @@ async function processSingleTrip(trip) {
         console.log(`[Worker] Trip ${trip.id} | Elapsed: ${Math.floor(secondsElapsed / 60)}m | Expected Remaining: ${Math.floor(expectedRemainingSeconds / 60)}m | Live ETA (Google): ${Math.floor(liveEtaSeconds / 60)}m | Delay: ${delayMinutes}m | Slack: ${liveSlackTimeHours ?? 'N/A'}h`);
 
         // ── Step 3: Persist checkpoint & live metrics ─────────────────────────
+        // Update live_eta_seconds and live_distance_meters ONLY when we confidently
+        // matched the Google route to the AI-chosen path (matchedRoute !== null).
+        // If matchedRoute is null, Google returned different roads, so we keep AI's values.
         const riskMap = { low: 0.1, medium: 0.4, high: 0.8 };
         const numericalRisk = riskMap[trip.ai_risk_level] || 0.0;
 
         await pool.query(`
             INSERT INTO trip_checkpoints (trip_id, lat, lng, current_delay_seconds, estimated_remaining_seconds, risk_score)
             VALUES ($1, $2, $3, $4, $5, $6)
-        `, [trip.id, currentLat, currentLng, totalDelaySeconds, liveEtaSeconds, numericalRisk]);
+        `, [trip.id, currentLat, currentLng, totalDelaySeconds, Math.round(liveEtaSeconds), numericalRisk]);
 
-        await pool.query(`
-            UPDATE trips
-            SET last_checked_at       = CURRENT_TIMESTAMP,
-                live_eta_seconds      = $1,
-                live_distance_meters  = $2,
-                live_slack_time_hours = $3
-            WHERE id = $4
-        `, [Math.round(liveEtaSeconds), Math.round(liveDistanceMeters), liveSlackTimeHours, trip.id]);
-
-        // Also update the routes table so navigation links stay in sync
-        await pool.query(`
-            UPDATE routes
-            SET duration_seconds = $1,
-                distance_meters  = $2
-            WHERE id = $3
-        `, [Math.round(liveEtaSeconds), Math.round(liveDistanceMeters), selectedRouteLive.id]);
+        if (matchedRoute) {
+            // Confident match: update ETA with live traffic for the SAME road the AI chose
+            await pool.query(`
+                UPDATE trips
+                SET last_checked_at       = CURRENT_TIMESTAMP,
+                    live_eta_seconds      = $1,
+                    live_distance_meters  = $2,
+                    live_slack_time_hours = $3
+                WHERE id = $4
+            `, [Math.round(liveEtaSeconds), Math.round(liveDistanceMeters), liveSlackTimeHours, trip.id]);
+            console.log(`[Worker] Trip ${trip.id}: ETA updated (matched AI route). ETA=${Math.floor(liveEtaSeconds/60)}m, Dist=${Math.round(liveDistanceMeters/1000)}km`);
+        } else {
+            // No confident match: only update timestamps & slack, keep AI's canonical ETA
+            await pool.query(`
+                UPDATE trips
+                SET last_checked_at       = CURRENT_TIMESTAMP,
+                    live_slack_time_hours = $1
+                WHERE id = $2
+            `, [liveSlackTimeHours, trip.id]);
+            console.log(`[Worker] Trip ${trip.id}: No route match — keeping AI's canonical ETA. Google fastest=${Math.floor(liveEtaSeconds/60)}m`);
+        }
 
         // ── Step 4: PROACTIVE TRIGGER ENGINE ─────────────────────────────────
 

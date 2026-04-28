@@ -588,7 +588,7 @@ export default function Shipments() {
                 {/* Driver App Onboarding Card */}
                 <div className="bg-linear-to-br from-green-50 to-emerald-50/30 border border-green-200/50 rounded-2xl p-6 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6 overflow-hidden relative group">
                     <div className="absolute -right-8 -top-8 w-32 h-32 bg-green-500/5 rounded-full blur-3xl group-hover:bg-green-500/10 transition-colors"></div>
-                    
+
                     <div className="flex items-start gap-5 relative z-10">
                         <div className="w-14 h-14 bg-green-500 rounded-2xl flex items-center justify-center shadow-lg shadow-green-500/20 shrink-0">
                             <span className="material-symbols-outlined text-white text-3xl">install_mobile</span>
@@ -601,7 +601,7 @@ export default function Shipments() {
                                 </span>
                             </h3>
                             <p className="text-green-800/70 text-sm max-w-md mt-1 font-medium">
-                                Distribute the companion app to your drivers to enable real-time AI telemetry and automated route deviations.
+                                Distribute the constracker app to your drivers to enable real-time AI telemetry and automated route deviations.
                             </p>
                         </div>
                     </div>
@@ -679,17 +679,17 @@ export default function Shipments() {
                                                         Truck {trip.truck_number || `#${trip.truck_id}`}
                                                     </span>
                                                     <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-bold uppercase tracking-[0.08em] ${
-                                                        trip.status === 'completed' 
-                                                            ? 'bg-green-50 text-green-700' 
+                                                        trip.status === 'completed'
+                                                            ? 'bg-green-50 text-green-700'
                                                             : trip.status === 'active' && !trip.current_route_is_ai_recommended
                                                                 ? 'bg-primary/10 text-primary animate-pulse'
                                                                 : 'bg-secondary/10 text-secondary'
                                                     }`}>
                                                         <span className="material-symbols-outlined text-[1rem]">
-                                                            {trip.status === 'completed' 
-                                                                ? 'check_circle' 
-                                                                : trip.status === 'active' && !trip.ai_decision 
-                                                                    ? 'psychology' 
+                                                            {trip.status === 'completed'
+                                                                ? 'check_circle'
+                                                                : trip.status === 'active' && !trip.ai_decision
+                                                                    ? 'psychology'
                                                                     : 'schedule'}
                                                         </span>
                                                         {trip.status === 'active' && !trip.ai_decision ? 'Analyzing' : (trip.status || 'active')}
@@ -793,9 +793,9 @@ export default function Shipments() {
                                                         </span>
                                                         {(trip.live_slack_time_hours !== null || trip.current_route_ai_slack_time_hours !== null) && (
                                                             <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold border ${
-                                                                Number(trip.live_slack_time_hours ?? trip.current_route_ai_slack_time_hours) < 0 
-                                                                    ? 'bg-red-50 text-red-700 border-red-200' 
-                                                                    : Number(trip.live_slack_time_hours ?? trip.current_route_ai_slack_time_hours) < 0.5 
+                                                                Number(trip.live_slack_time_hours ?? trip.current_route_ai_slack_time_hours) < 0
+                                                                    ? 'bg-red-50 text-red-700 border-red-200'
+                                                                    : Number(trip.live_slack_time_hours ?? trip.current_route_ai_slack_time_hours) < 0.5
                                                                         ? 'bg-amber-50 text-amber-700 border-amber-200'
                                                                         : 'bg-green-50 text-green-700 border-green-200'
                                                             }`}>
@@ -805,9 +805,9 @@ export default function Shipments() {
                                                         )}
                                                         {trip.current_route_ai_risk_level && trip.current_route_ai_risk_level !== 'low' && (
                                                             <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold border uppercase tracking-wider ${
-                                                                trip.current_route_ai_risk_level === 'high' 
-                                                                    ? 'bg-red-50 text-red-700 border-red-200' 
-                                                                    : trip.current_route_ai_risk_level === 'medium' 
+                                                                trip.current_route_ai_risk_level === 'high'
+                                                                    ? 'bg-red-50 text-red-700 border-red-200'
+                                                                    : trip.current_route_ai_risk_level === 'medium'
                                                                         ? 'bg-amber-50 text-amber-700 border-amber-200'
                                                                         : 'bg-green-50 text-green-700 border-green-200'
                                                             }`}>

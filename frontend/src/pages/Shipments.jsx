@@ -712,6 +712,16 @@ export default function Shipments() {
                                                                 Reached Destination
                                                             </p>
                                                         </div>
+                                                    ) : trip.status === 'not started' ? (
+                                                        <div className="flex flex-col items-center justify-center text-center opacity-70">
+                                                            <div className="flex items-center gap-2 text-secondary font-bold mb-1">
+                                                                <span className="material-symbols-outlined text-[1.2rem]">pending_actions</span>
+                                                                Awaiting Start
+                                                            </div>
+                                                            <p className="text-[10px] text-secondary leading-tight uppercase tracking-wider font-semibold">
+                                                                Driver activation pending
+                                                            </p>
+                                                        </div>
                                                     ) : trip.status === 'active' && !trip.ai_decision ? (
                                                         <div className="flex flex-col items-center justify-center text-center">
                                                             <div className="flex items-center gap-2 text-primary font-bold animate-pulse mb-1">

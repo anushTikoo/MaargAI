@@ -616,7 +616,7 @@ async function enrichTripSegments(tripId) {
         });
 
         const recommendation = await getAIRouteRecommendation(geminiPayload);
-        const selectedIndex  = recommendation.selected_route;
+        const selectedIndex  = String(recommendation.selected_route || '').trim().toUpperCase();
 
         // Update ALL routes with their respective AI stats
         for (const routeData of geminiPayload) {
@@ -873,12 +873,27 @@ router.post('/locations', async (req, res) => {
                 nextTripStatus = activateTripResult.rows[0].status;
                 console.log(`[Trip] Activated trip ${tripId} with route ${assignedRouteId} (baseline: ${assignedRoute?.duration_seconds}s).`);
 
-                // Fire-and-forget: enrich all segments for this trip with real-time
-                // traffic + weather data now that the trip is actually starting.
                 enrichTripSegments(tripId).catch((err) =>
                     console.error(`[Enrichment] Failed for trip ${tripId}:`, err.message)
                 );
             }
+        }
+
+        // RE-FETCH: After activation or healing, we MUST re-query the trip and joined route 
+        // to ensure the local 'tripResult' has the latest current_route_id, polyline, etc.
+        // for the link generation logic below.
+        const refreshedTripRes = await pool.query(
+            `SELECT t.id, t.fleet_manager_id, t.status, t.source_lat, t.source_lng, t.dest_lat, t.dest_lng, 
+                    t.current_route_id, t.last_notified_route_id, t.ai_reroute_reason, t.ai_decision, 
+                    r.is_ai_recommended, r.polyline
+             FROM trips t
+             LEFT JOIN routes r ON t.current_route_id = r.id
+             WHERE t.id = $1`,
+            [tripId]
+        );
+        if (refreshedTripRes.rowCount > 0) {
+            tripResult.rows[0] = refreshedTripRes.rows[0];
+            currentRouteId = tripResult.rows[0].current_route_id;
         }
 
         const distanceToDestMeters = Number.isFinite(destLat) && Number.isFinite(destLng)
@@ -917,6 +932,10 @@ router.post('/locations', async (req, res) => {
         let googleMapsUrl = null;
         let isActuallyOptimized = !!tripResult.rows[0].is_ai_recommended;
 
+        // If we have an assigned route, we should provide navigation even if not "AI optimized" yet.
+        // We only show it as "not optimized" if it's not the AI's final choice.
+        const canProvideNavigation = !!(currentRouteId && tripResult.rows[0].polyline);
+
         // NEW: Instant Deviation Check. 
         // If the truck is >500m away from the assigned polyline, it's not "AI Optimized" anymore.
         if (currentRouteId && tripResult.rows[0].polyline) {
@@ -926,8 +945,8 @@ router.post('/locations', async (req, res) => {
             }
         }
 
-        // Only generate a navigation URL when the route is AI-recommended AND we are actually on it.
-        if (currentRouteId && isActuallyOptimized) {
+        // Only generate a navigation URL when we have a valid route polyline.
+        if (canProvideNavigation) {
             let waypointsStr = '';
             const polyline = tripResult.rows[0].polyline;
             if (polyline) {

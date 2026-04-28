@@ -564,7 +564,6 @@ async function enrichTripSegments(tripId) {
                 r.duration_seconds,
                 r.has_tolls,
                 r.toll_cost,
-                COALESCE(SUM(ts.duration_in_traffic_seconds), null) AS total_traffic_duration,
                 COALESCE(AVG(ts.delay_ratio), null)        AS avg_delay,
                 COALESCE(AVG(ts.weather_score), null)      AS avg_weather,
                 COALESCE(MAX(ts.weather_score), null)      AS max_weather,
@@ -593,9 +592,7 @@ async function enrichTripSegments(tripId) {
                 + (avgWeather * 0.10) + (maxWeather * 0.30)).toFixed(3)
             );
 
-            const etaSeconds = r.total_traffic_duration 
-                ? parseInt(r.total_traffic_duration) 
-                : Math.round(r.duration_seconds * avgDelay);
+            const etaSeconds = Math.round(r.duration_seconds * avgDelay);
             const etaHours = parseFloat((etaSeconds / 3600).toFixed(2));
             const fuelCostInr = parseFloat(((r.distance_meters / 1000 / mileageKmpl) * FUEL_PRICE).toFixed(2));
             const tollCostInr = r.has_tolls

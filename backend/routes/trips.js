@@ -824,16 +824,8 @@ router.post('/locations', async (req, res) => {
         let nextTripStatus = currentTripStatus;
 
         // SELF-HEALING: If the trip is active but somehow missing its current_route_id, try to assign Route A
-        if (currentTripStatus === 'active' && !currentRouteId) {
-            console.log(`[Resiliency] Active trip ${tripId} missing current_route_id. Attempting to heal...`);
-            const healingRes = await pool.query(`SELECT id, polyline FROM routes WHERE trip_id = $1 AND route_index = 'A'`, [tripId]);
-            if (healingRes.rows[0]) {
-                currentRouteId = healingRes.rows[0].id;
-                tripResult.rows[0].polyline = healingRes.rows[0].polyline;
-                await pool.query(`UPDATE trips SET current_route_id = $1 WHERE id = $2`, [currentRouteId, tripId]);
-                console.log(`[Resiliency] Healed trip ${tripId} with Route ID: ${currentRouteId}`);
-            }
-        }
+        // REMOVED: Premature self-healing that forced Route A before AI analysis.
+        // We now wait for enrichTripSegments to finish and assign the best route.
 
         if (
             currentTripStatus === 'not started' &&
@@ -852,20 +844,13 @@ router.post('/locations', async (req, res) => {
             const assignedRoute = routeRes.rows[0] || null;
             const assignedRouteId = assignedRoute?.id || null;
 
-            if (assignedRoute) {
-                currentRouteId = assignedRouteId;
-                tripResult.rows[0].polyline = assignedRoute.polyline;
-            }
-
             const activateTripResult = await pool.query(
                 `UPDATE trips
                  SET status = 'active',
-                     current_route_id = $2,
-                     baseline_eta_seconds = COALESCE($3, baseline_eta_seconds)
+                     activated_at = CURRENT_TIMESTAMP
                  WHERE id = $1
-                   AND status = 'not started'
                  RETURNING status`,
-                [tripId, assignedRouteId, assignedRoute?.duration_seconds ?? null]
+                [tripId]
             );
 
             if (activateTripResult.rowCount > 0) {
@@ -932,9 +917,9 @@ router.post('/locations', async (req, res) => {
         let googleMapsUrl = null;
         let isActuallyOptimized = !!tripResult.rows[0].is_ai_recommended;
 
-        // If we have an assigned route, we should provide navigation even if not "AI optimized" yet.
-        // We only show it as "not optimized" if it's not the AI's final choice.
-        const canProvideNavigation = !!(currentRouteId && tripResult.rows[0].polyline);
+        // ONLY provide navigation if the route is AI-recommended and verified.
+        // This prevents the "baseline" (Route A) from being sent before AI analysis finishes.
+        const canProvideNavigation = !!(currentRouteId && tripResult.rows[0].polyline && isActuallyOptimized);
 
         // NEW: Instant Deviation Check. 
         // If the truck is >500m away from the assigned polyline, it's not "AI Optimized" anymore.
@@ -945,7 +930,7 @@ router.post('/locations', async (req, res) => {
             }
         }
 
-        // Only generate a navigation URL when we have a valid route polyline.
+        // Only generate a navigation URL when the route is AI-optimized AND we are actually on it.
         if (canProvideNavigation) {
             let waypointsStr = '';
             const polyline = tripResult.rows[0].polyline;

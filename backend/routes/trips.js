@@ -631,14 +631,18 @@ async function enrichTripSegments(tripId) {
                      ai_fuel_cost_inr = $2,
                      ai_slack_time_hours = $3,
                      ai_risk_level = $4,
-                     is_ai_recommended = $5
-                 WHERE trip_id = $6 AND route_index = $7`,
+                     is_ai_recommended = $5,
+                     duration_seconds = $6,
+                     distance_meters = $7
+                 WHERE trip_id = $8 AND route_index = $9`,
                 [
                     routeData.fuel_cost_inr + (routeData.toll_cost_inr || 0),
                     routeData.fuel_cost_inr,
                     routeData.slack_time_hours,
                     routeData.reliability_score < 0.3 ? 'low' : routeData.reliability_score < 0.7 ? 'medium' : 'high',
                     routeData.id === selectedIndex,
+                    routeData._traffic_adjusted_duration,
+                    routeData._distance_meters,
                     tripId,
                     routeData.id
                 ]

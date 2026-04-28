@@ -67,44 +67,56 @@ async function processSingleTrip(trip) {
     const currentLng = parseFloat(trip.last_gps_lng);
 
     try {
-        // ── Step 1: Get live ETA from Google Routes API ──────────────────────
-        const routes = await getRoutes(currentLat, currentLng, trip.dest_lat, trip.dest_lng);
-
-        if (!routes || routes.length === 0) {
-            console.warn(`[Worker] No routing data returned for trip ${trip.id}.`);
-            return;
-        }
-
-        // Always use Google's fastest current route for internal DELAY DETECTION.
-        // This measures the 'Truth' of traffic regardless of which route we chose.
-        const fastestRouteEtaSeconds = routes[0].durationSeconds;
-
-        // ── Step 1.1: Match selecting route intelligently ─────────────────────
-        // We check if the truck is actually on the assigned route.
+        // ── Step 1: Get live ETA specifically for the ASSIGNED route ──────────
         const pathAnalysis = getDistanceToPolyline(currentLat, currentLng, trip.polyline);
         const isDeviated = !pathAnalysis.isNear;
 
-        // If on path, find the Google route that most closely matches the original.
-        // We compare the total distance of the new route vs the "remaining" distance on the old path.
-        let matchedRoute = null;
-        if (!isDeviated) {
-            const points = decodePolyline(trip.polyline);
-            const remainingPoints = points.slice(pathAnalysis.nearestIndex);
-            
-            // Simple match: does Google return any route that's similar in distance to our remaining path?
-            // (Google's fastest route from a point ON the path usually follows the path)
-            matchedRoute = routes.find(r => {
-                // If the new route distance is within 10% of our remaining polyline distance (min 500m tolerance), it's likely a match
-                const expectedRemainingMeters = remainingPoints.reduce((sum, p, i) => i === 0 ? 0 : sum + calculateDistanceMeters(remainingPoints[i-1], remainingPoints[i]), 0);
-                const tolerance = Math.max(500, expectedRemainingMeters * 0.15);
-                return Math.abs(r.distanceMeters - expectedRemainingMeters) < tolerance;
-            });
+        let liveEtaSeconds = trip.route_duration; // Baseline fallback
+        let liveDistanceMeters = trip.route_distance;
+
+        if (!isDeviated && trip.polyline) {
+            try {
+                const points = decodePolyline(trip.polyline);
+                const remainingPoints = points.slice(pathAnalysis.nearestIndex);
+                
+                // Calculate remaining distance purely from polyline
+                liveDistanceMeters = remainingPoints.reduce((sum, p, i) => 
+                    i === 0 ? 0 : sum + calculateDistanceMeters(remainingPoints[i-1], remainingPoints[i]), 0);
+
+                // For a highly accurate ETA on the SAME route, we segment the remaining path 
+                // and fetch current traffic for those specific segments.
+                const remainingSegments = segmentRoute(remainingPoints, 12); // ~12km segments
+                if (remainingSegments.length > 0) {
+                    const trafficDurations = await fetchSegmentTrafficDurations(remainingSegments);
+                    const validDurations = trafficDurations.filter(d => d !== null);
+                    
+                    if (validDurations.length > 0) {
+                        // We use the traffic data for the segments we could fetch, 
+                        // and estimate the rest (if any) using the ratio.
+                        const sumTraffic = validDurations.reduce((a, b) => a + b, 0);
+                        const coverageRatio = validDurations.length / remainingSegments.length;
+                        liveEtaSeconds = Math.round(sumTraffic / coverageRatio);
+                        
+                        console.log(`[Worker] Trip ${trip.id}: Live ETA updated using ${validDurations.length}/${remainingSegments.length} segments of assigned route.`);
+                    }
+                }
+            } catch (err) {
+                console.warn(`[Worker] Failed to compute route-specific ETA for trip ${trip.id}:`, err.message);
+                // Fallback: use a basic distance-based estimate or the fastest Google route
+                const routes = await getRoutes(currentLat, currentLng, trip.dest_lat, trip.dest_lng);
+                if (routes.length > 0) {
+                    liveEtaSeconds = routes[0].durationSeconds;
+                    liveDistanceMeters = routes[0].distanceMeters;
+                }
+            }
+        } else {
+            // If deviated, we HAVE to ask Google for a new route to the destination
+            const routes = await getRoutes(currentLat, currentLng, trip.dest_lat, trip.dest_lng);
+            if (routes.length > 0) {
+                liveEtaSeconds = routes[0].durationSeconds;
+                liveDistanceMeters = routes[0].distanceMeters;
+            }
         }
-        
-        const selectedRouteLive = matchedRoute || routes[0];
-        
-        const liveEtaSeconds = selectedRouteLive.durationSeconds;
-        const liveDistanceMeters = selectedRouteLive.distanceMeters;
 
         // ── Step 2: Calculate delay & slack ──────────────────────────────────
         // Delay = current Google ETA − how much time was still budgeted at this moment.
@@ -113,7 +125,9 @@ async function processSingleTrip(trip) {
         const createdAtMs = new Date(trip.created_at).getTime();
         const secondsElapsed = Math.floor((Date.now() - createdAtMs) / 1000);
         const expectedRemainingSeconds = Math.max(0, (trip.baseline_eta_seconds || 0) - secondsElapsed);
-        const totalDelaySeconds = Math.max(0, fastestRouteEtaSeconds - expectedRemainingSeconds);
+        
+        // We use the live ETA of the ASSIGNED route to measure delay
+        const totalDelaySeconds = Math.max(0, liveEtaSeconds - expectedRemainingSeconds);
         const delayMinutes = Math.floor(totalDelaySeconds / 60);
 
         const predictedArrivalMs = Date.now() + (liveEtaSeconds * 1000);

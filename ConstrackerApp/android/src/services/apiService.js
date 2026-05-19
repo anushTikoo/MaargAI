@@ -1,6 +1,5 @@
 import { API_URL } from '../config/constants';
 
-let successfulPostCount = 0;
 
 /**
  * Sends a location update to the server.
@@ -32,8 +31,6 @@ export async function sendLocation(token, lat, lng) {
       );
     }
 
-    successfulPostCount += 1;
-
     // Attempt to parse a server-sent notification from the response.
     // The server can include the Maps URL at trip.ai_recommendation.google_maps_url.
     try {
@@ -41,8 +38,7 @@ export async function sendLocation(token, lat, lng) {
       const message = data?.message || null;
       const googleMapsUrl = data?.trip?.ai_recommendation?.google_maps_url || data?.link || null;
       if (message || googleMapsUrl) {
-        const showLink = successfulPostCount >= 2;
-        return { message, link: googleMapsUrl, showLink };
+        return { message, link: googleMapsUrl, showLink: true };
       }
     } catch (_) {
       // Response body is not JSON — that is fine, just no notification.

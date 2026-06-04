@@ -115,7 +115,7 @@ export default function Landing() {
                   <span className="material-symbols-outlined text-3xl text-secondary" style={{ fontVariationSettings: "'FILL' 1" }}>add_location_alt</span>
                 </div>
                 <h3 className="text-2xl font-bold text-on-surface mb-3">1. Create &amp; Track</h3>
-                <p className="text-on-surface-variant leading-relaxed">Fleet managers set trips in seconds. Drivers simply tap a secure tracking link via SMS or WhatsApp—no heavy app installs required.</p>
+                <p className="text-on-surface-variant leading-relaxed">Fleet managers set trips in seconds. Drivers simply downloads the constracker app, enters license plate number and start tracking.</p>
               </div>
               {/* Step 2 */}
               <div className="flex flex-col relative group bg-white p-8 rounded-2xl shadow-2xl border-2 border-slate-300 hover:border-slate-400 hover:-translate-y-2 transition-all duration-300">

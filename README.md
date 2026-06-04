@@ -1,6 +1,5 @@
 # MaargAI — The Digital Wayfinder for Indian Logistics
 
-> **Live MVP:** https://upbeat-cosine-457405-n0.web.app/ &nbsp;|&nbsp; **GitHub:** https://github.com/anushTikoo/MaargAI
 
 ---
 

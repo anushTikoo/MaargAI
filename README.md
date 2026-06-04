@@ -1,6 +1,5 @@
 # MaargAI — The Digital Wayfinder for Indian Logistics
 
-
 ---
 
 ## What is MaargAI?
